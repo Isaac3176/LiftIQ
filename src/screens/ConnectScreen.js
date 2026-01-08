@@ -10,20 +10,23 @@ import {
   Platform,
   TouchableWithoutFeedback,
   Keyboard,
-  ScrollView
+  ScrollView,
+  SafeAreaView,
+  StatusBar
 } from 'react-native';
 import { connectWebSocket } from '../utils/websocket';
+import { useWebSocket } from '../context/WebSocketContext';
 import ConnectionStatus from '../components/ConnectionStatus';
 
-export default function ConnectScreen({ onConnect }) {
+export default function ConnectScreen({ onConnected }) {
+  const { connect, connectionStatus } = useWebSocket();
   const [ipAddress, setIpAddress] = useState('192.168.1.100');
   const [port, setPort] = useState('8765');
-  const [status, setStatus] = useState('disconnected');
   const [error, setError] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
 
   const handleConnect = () => {
-    Keyboard.dismiss(); // Close keyboard when connecting
+    Keyboard.dismiss();
     
     if (!ipAddress.trim()) {
       setError('Please enter an IP address');
@@ -32,107 +35,108 @@ export default function ConnectScreen({ onConnect }) {
 
     setIsConnecting(true);
     setError('');
-    setStatus('connecting');
 
     connectWebSocket(
       ipAddress,
       port,
       (ws) => {
         setIsConnecting(false);
-        setStatus('connected');
-        setTimeout(() => onConnect(ws), 500);
+        connect(ws); // Store in context
+        setTimeout(() => onConnected(), 500);
       },
       (errorMsg) => {
         setIsConnecting(false);
-        setStatus('error');
         setError(errorMsg);
       }
     );
   };
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <ScrollView 
-          contentContainerStyle={styles.scrollContainer}
-          keyboardShouldPersistTaps="handled"
-        >
-          <View style={styles.header}>
-            <Text style={styles.title}>Smart Weightlifting</Text>
-            <Text style={styles.subtitle}>Connect to Raspberry Pi</Text>
-          </View>
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="light-content" />
+      <KeyboardAvoidingView 
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <ScrollView 
+            contentContainerStyle={styles.scrollContainer}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.header}>
+              <Text style={styles.title}>Smart Weightlifting</Text>
+              <Text style={styles.subtitle}>Connect to Raspberry Pi</Text>
+            </View>
 
-          <ConnectionStatus status={status} />
+            <ConnectionStatus status={connectionStatus} />
 
-          <View style={styles.form}>
-            <Text style={styles.label}>Raspberry Pi IP Address</Text>
-            <TextInput
-              style={styles.input}
-              value={ipAddress}
-              onChangeText={setIpAddress}
-              placeholder="192.168.1.100"
-              placeholderTextColor="#666"
-              keyboardType="numeric"
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="next"
-              onSubmitEditing={() => Keyboard.dismiss()}
-            />
+            <View style={styles.form}>
+              <Text style={styles.label}>Raspberry Pi IP Address</Text>
+              <TextInput
+                style={styles.input}
+                value={ipAddress}
+                onChangeText={setIpAddress}
+                placeholder="192.168.1.100"
+                placeholderTextColor="#666"
+                keyboardType="numeric"
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="next"
+                onSubmitEditing={() => Keyboard.dismiss()}
+              />
 
-            <Text style={styles.label}>Port</Text>
-            <TextInput
-              style={styles.input}
-              value={port}
-              onChangeText={setPort}
-              placeholder="8765"
-              placeholderTextColor="#666"
-              keyboardType="numeric"
-              returnKeyType="done"
-              onSubmitEditing={() => Keyboard.dismiss()}
-            />
+              <Text style={styles.label}>Port</Text>
+              <TextInput
+                style={styles.input}
+                value={port}
+                onChangeText={setPort}
+                placeholder="8765"
+                placeholderTextColor="#666"
+                keyboardType="numeric"
+                returnKeyType="done"
+                onSubmitEditing={() => Keyboard.dismiss()}
+              />
 
-            {error ? (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorText}>{error}</Text>
-              </View>
-            ) : null}
+              {error ? (
+                <View style={styles.errorContainer}>
+                  <Text style={styles.errorText}>{error}</Text>
+                </View>
+              ) : null}
+
+              <TouchableOpacity 
+                style={[styles.button, isConnecting && styles.buttonDisabled]}
+                onPress={handleConnect}
+                disabled={isConnecting}
+              >
+                {isConnecting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.buttonText}>Connect</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.instructions}>
+              <Text style={styles.instructionTitle}>Setup Instructions:</Text>
+              <Text style={styles.instructionText}>
+                1. Start the WebSocket server on your Raspberry Pi{'\n'}
+                2. Ensure both devices are on the same Wi-Fi network{'\n'}
+                3. Enter the Pi's IP address above{'\n'}
+                4. Default port is 8765{'\n'}
+                5. Tap Connect
+              </Text>
+            </View>
 
             <TouchableOpacity 
-              style={[styles.button, isConnecting && styles.buttonDisabled]}
-              onPress={handleConnect}
-              disabled={isConnecting}
+              style={styles.dismissButton}
+              onPress={Keyboard.dismiss}
             >
-              {isConnecting ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.buttonText}>Connect</Text>
-              )}
+              <Text style={styles.dismissButtonText}>Tap anywhere to close keyboard</Text>
             </TouchableOpacity>
-          </View>
-
-          <View style={styles.instructions}>
-            <Text style={styles.instructionTitle}>Setup Instructions:</Text>
-            <Text style={styles.instructionText}>
-              1. Start the WebSocket server on your Raspberry Pi{'\n'}
-              2. Ensure both devices are on the same Wi-Fi network{'\n'}
-              3. Enter the Pi's IP address above{'\n'}
-              4. Default port is 8765{'\n'}
-              5. Tap Connect
-            </Text>
-          </View>
-
-          <TouchableOpacity 
-            style={styles.dismissButton}
-            onPress={Keyboard.dismiss}
-          >
-            <Text style={styles.dismissButtonText}>Tap anywhere to close keyboard</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </TouchableWithoutFeedback>
-    </KeyboardAvoidingView>
+          </ScrollView>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 

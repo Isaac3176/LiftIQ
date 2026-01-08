@@ -1,89 +1,68 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Animated, SafeAreaView, StatusBar } from 'react-native';
+import { useWebSocket } from '../context/WebSocketContext';
 import RepCounter from '../components/RepCounter';
 import LiveChart from '../components/LiveChart';
-import { detectRep, resetRepDetector } from '../utils/repDetection';
 
-export default function WorkoutScreen({ websocket, onDisconnect, onEndWorkout }) {
+export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
+  const { 
+    connectionStatus, 
+    repCount, 
+    currentState, 
+    lastMessage,
+    resetReps,
+    disconnect 
+  } = useWebSocket();
+
   const [isWorkoutActive, setIsWorkoutActive] = useState(false);
-  const [repCount, setRepCount] = useState(0);
   const [chartData, setChartData] = useState([]);
-  const [rawData, setRawData] = useState({ ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: 0 });
   const [startTime, setStartTime] = useState(null);
   const [sessionSamples, setSessionSamples] = useState([]);
-  const [isConnected, setIsConnected] = useState(true);
+  const [filteredValue, setFilteredValue] = useState(0);
+  const [confidence, setConfidence] = useState(0);
   
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const prevRepCount = useRef(0);
 
+  // Handle incoming messages
   useEffect(() => {
-    if (!websocket) return;
+    if (!lastMessage) return;
 
-    websocket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
+    if (lastMessage.type === 'rep_update' && isWorkoutActive) {
+      // Update chart with filtered value
+      if (lastMessage.filt !== undefined) {
+        const newValue = lastMessage.filt;
+        setFilteredValue(newValue);
         
-        // Safely extract values with defaults
-        const safeData = {
-          ax: typeof data.ax === 'number' ? data.ax : 0,
-          ay: typeof data.ay === 'number' ? data.ay : 0,
-          az: typeof data.az === 'number' ? data.az : 0,
-          gx: typeof data.gx === 'number' ? data.gx : 0,
-          gy: typeof data.gy === 'number' ? data.gy : 0,
-          gz: typeof data.gz === 'number' ? data.gz : 0,
-        };
-        
-        setRawData(safeData);
-
-        if (isWorkoutActive) {
-          setSessionSamples(prev => [...prev, { ...safeData, timestamp: Date.now() }]);
-
-          const newMagnitude = Math.sqrt(
-            safeData.ax * safeData.ax + 
-            safeData.ay * safeData.ay + 
-            safeData.az * safeData.az
-          );
-
-          setChartData(prev => {
-            const updated = [...prev, newMagnitude];
-            return updated.slice(-100);
-          });
-
-          const repDetected = detectRep(newMagnitude);
-          if (repDetected) {
-            setRepCount(prev => prev + 1);
-            triggerPulse();
-          }
-        }
-      } catch (err) {
-        console.error('Failed to parse message:', err);
+        setChartData(prev => {
+          const updated = [...prev, newValue];
+          return updated.slice(-100);
+        });
       }
-    };
 
-    websocket.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      setIsConnected(false);
-    };
+      // Store session data
+      setSessionSamples(prev => [...prev, {
+        ...lastMessage,
+        timestamp: Date.now()
+      }]);
 
-    websocket.onclose = () => {
-      console.log('WebSocket closed');
-      setIsConnected(false);
-      alert('Connection closed. Returning to connect screen.');
-      onDisconnect();
-    };
-
-    return () => {
-      if (websocket) {
-        websocket.onmessage = null;
-        websocket.onerror = null;
-        websocket.onclose = null;
+      // Update confidence if provided
+      if (lastMessage.confidence !== undefined) {
+        setConfidence(lastMessage.confidence);
       }
-    };
-  }, [websocket, isWorkoutActive]);
+
+      // Trigger animation on new rep
+      if (repCount > prevRepCount.current) {
+        triggerPulse();
+        prevRepCount.current = repCount;
+      }
+    }
+  }, [lastMessage, isWorkoutActive, repCount]);
 
   const triggerPulse = () => {
     Animated.sequence([
       Animated.timing(pulseAnim, {
-        toValue: 1.2,
+        toValue: 1.3,
         duration: 150,
         useNativeDriver: true,
       }),
@@ -97,11 +76,11 @@ export default function WorkoutScreen({ websocket, onDisconnect, onEndWorkout })
 
   const handleStartWorkout = () => {
     setIsWorkoutActive(true);
-    setRepCount(0);
     setChartData([]);
     setSessionSamples([]);
     setStartTime(Date.now());
-    resetRepDetector();
+    resetReps(); // Reset rep counter in context
+    prevRepCount.current = 0;
   };
 
   const handleStopWorkout = () => {
@@ -114,8 +93,18 @@ export default function WorkoutScreen({ websocket, onDisconnect, onEndWorkout })
       samples: sessionSamples,
       startTime,
       endTime: Date.now(),
+      avgVelocity: 0.28, // TODO: Calculate from samples
+      exercise: 'Squat',
+      weight: 135,
     });
   };
+
+  const handleDisconnect = () => {
+    disconnect();
+    onDisconnect();
+  };
+
+  const isConnected = connectionStatus === 'connected';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -128,56 +117,98 @@ export default function WorkoutScreen({ websocket, onDisconnect, onEndWorkout })
           <Text style={styles.headerTitle}>Live Workout</Text>
           <View style={styles.statusContainer}>
             <View style={[styles.statusDot, isConnected ? styles.statusConnected : styles.statusDisconnected]} />
-            <Text style={styles.statusText}>{isConnected ? 'Connected' : 'Disconnected'}</Text>
+            <Text style={styles.statusText}>
+              {isConnected ? `Connected • ${currentState}` : 'Disconnected'}
+            </Text>
           </View>
         </View>
-        <TouchableOpacity onPress={onDisconnect} style={styles.disconnectButton}>
+        <TouchableOpacity onPress={handleDisconnect} style={styles.disconnectButton}>
           <Text style={styles.disconnectText}>⋮</Text>
         </TouchableOpacity>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
+        {/* Large Rep Counter */}
         <RepCounter count={repCount} pulseAnim={pulseAnim} />
 
+        {/* State Indicator */}
+        {isWorkoutActive && (
+          <View style={styles.stateCard}>
+            <Text style={styles.stateLabel}>Status</Text>
+            <Text style={[
+              styles.stateValue,
+              currentState === 'MOVING' ? styles.stateMoving : styles.stateWaiting
+            ]}>
+              {currentState === 'CALIBRATING' && '🔄 Calibrating...'}
+              {currentState === 'WAITING' && '⏸️ Ready'}
+              {currentState === 'MOVING' && '🏋️ Moving'}
+            </Text>
+            {confidence > 0 && (
+              <Text style={styles.confidenceText}>
+                Confidence: {(confidence * 100).toFixed(0)}%
+              </Text>
+            )}
+          </View>
+        )}
+
+        {/* Live Chart */}
         <View style={styles.chartContainer}>
-          <Text style={styles.chartTitle}>Acceleration Magnitude</Text>
+          <Text style={styles.chartTitle}>
+            Filtered Signal (Gyro Magnitude)
+          </Text>
           <LiveChart data={chartData} />
+          <Text style={styles.chartNote}>
+            Current: {filteredValue.toFixed(2)} rad/s
+          </Text>
         </View>
 
-        <View style={styles.rawDataContainer}>
-          <Text style={styles.rawDataTitle}>Raw IMU Data</Text>
-          <View style={styles.rawDataGrid}>
-            <View style={styles.rawDataItem}>
-              <Text style={styles.rawDataLabel}>Accel X:</Text>
-              <Text style={styles.rawDataValue}>{rawData.ax.toFixed(2)}</Text>
-            </View>
-            <View style={styles.rawDataItem}>
-              <Text style={styles.rawDataLabel}>Accel Y:</Text>
-              <Text style={styles.rawDataValue}>{rawData.ay.toFixed(2)}</Text>
-            </View>
-            <View style={styles.rawDataItem}>
-              <Text style={styles.rawDataLabel}>Accel Z:</Text>
-              <Text style={styles.rawDataValue}>{rawData.az.toFixed(2)}</Text>
-            </View>
-            <View style={styles.rawDataItem}>
-              <Text style={styles.rawDataLabel}>Gyro X:</Text>
-              <Text style={styles.rawDataValue}>{rawData.gx.toFixed(2)}</Text>
-            </View>
-            <View style={styles.rawDataItem}>
-              <Text style={styles.rawDataLabel}>Gyro Y:</Text>
-              <Text style={styles.rawDataValue}>{rawData.gy.toFixed(2)}</Text>
-            </View>
-            <View style={styles.rawDataItem}>
-              <Text style={styles.rawDataLabel}>Gyro Z:</Text>
-              <Text style={styles.rawDataValue}>{rawData.gz.toFixed(2)}</Text>
+        {/* Raw Data Display */}
+        {lastMessage && (
+          <View style={styles.rawDataContainer}>
+            <Text style={styles.rawDataTitle}>Latest Data</Text>
+            <View style={styles.rawDataGrid}>
+              <View style={styles.rawDataItem}>
+                <Text style={styles.rawDataLabel}>Time:</Text>
+                <Text style={styles.rawDataValue}>
+                  {lastMessage.t?.toFixed(2) || 'N/A'}s
+                </Text>
+              </View>
+              <View style={styles.rawDataItem}>
+                <Text style={styles.rawDataLabel}>Reps:</Text>
+                <Text style={styles.rawDataValue}>{lastMessage.reps || 0}</Text>
+              </View>
+              <View style={styles.rawDataItem}>
+                <Text style={styles.rawDataLabel}>State:</Text>
+                <Text style={styles.rawDataValue}>{lastMessage.state || 'N/A'}</Text>
+              </View>
+              <View style={styles.rawDataItem}>
+                <Text style={styles.rawDataLabel}>Filtered:</Text>
+                <Text style={styles.rawDataValue}>
+                  {lastMessage.filt?.toFixed(2) || 'N/A'}
+                </Text>
+              </View>
             </View>
           </View>
-        </View>
+        )}
+
+        {/* Instructions when not connected */}
+        {!isConnected && (
+          <View style={styles.notConnectedCard}>
+            <Text style={styles.notConnectedIcon}>⚠️</Text>
+            <Text style={styles.notConnectedText}>
+              Connection lost. Please return to the connect screen.
+            </Text>
+          </View>
+        )}
       </ScrollView>
 
       <View style={styles.footer}>
         {!isWorkoutActive ? (
-          <TouchableOpacity style={styles.startButton} onPress={handleStartWorkout}>
+          <TouchableOpacity 
+            style={[styles.startButton, !isConnected && styles.buttonDisabled]} 
+            onPress={handleStartWorkout}
+            disabled={!isConnected}
+          >
             <Text style={styles.startButtonText}>Start Workout</Text>
           </TouchableOpacity>
         ) : (
@@ -203,6 +234,14 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#222',
+  },
+  backButtonContainer: {
+    padding: 8,
+    marginRight: 12,
+  },
+  backButtonText: {
+    fontSize: 28,
+    color: '#fff',
   },
   headerTitle: {
     fontSize: 24,
@@ -230,14 +269,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#888',
   },
-  backButtonContainer: {
-    padding: 8,
-    marginRight: 12,
-  },
-  backButtonText: {
-    fontSize: 28,
-    color: '#fff',
-  },
   disconnectButton: {
     padding: 8,
   },
@@ -247,6 +278,34 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 20,
+  },
+  stateCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  stateLabel: {
+    fontSize: 14,
+    color: '#888',
+    marginBottom: 8,
+  },
+  stateValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  stateWaiting: {
+    color: '#FFC107',
+  },
+  stateMoving: {
+    color: '#4CAF50',
+  },
+  confidenceText: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 8,
   },
   chartContainer: {
     backgroundColor: '#1a1a1a',
@@ -259,6 +318,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#fff',
     marginBottom: 12,
+  },
+  chartNote: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 8,
+    textAlign: 'center',
   },
   rawDataContainer: {
     backgroundColor: '#1a1a1a',
@@ -288,6 +353,21 @@ const styles = StyleSheet.create({
     color: '#4CAF50',
     fontWeight: 'bold',
   },
+  notConnectedCard: {
+    backgroundColor: '#3a1a1a',
+    borderRadius: 12,
+    padding: 24,
+    alignItems: 'center',
+  },
+  notConnectedIcon: {
+    fontSize: 48,
+    marginBottom: 16,
+  },
+  notConnectedText: {
+    fontSize: 16,
+    color: '#ff4444',
+    textAlign: 'center',
+  },
   footer: {
     padding: 20,
     borderTopWidth: 1,
@@ -298,6 +378,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 18,
     alignItems: 'center',
+  },
+  buttonDisabled: {
+    backgroundColor: '#333',
   },
   startButtonText: {
     color: '#fff',
