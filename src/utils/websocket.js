@@ -1,3 +1,4 @@
+// src/utils/websocket.js
 export function connectWebSocket(ipAddress, port, onSuccess, onError) {
   const url = `ws://${ipAddress}:${port}`;
   
