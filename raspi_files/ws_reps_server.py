@@ -21,6 +21,20 @@ STATE_MOVING = "MOVING"
 STATE_RECORDING = "RECORDING"
 STATE_STOPPED = "STOPPED"
 
+# Snapshot sent immediately on reconnect
+LAST_STATUS = {
+    "type": "status",
+    "state": STATE_WAITING,
+    "reps": 0,
+    "recording": False,
+    "t": 0.0,
+    "gyro_filt": 0.0
+}
+
+# Cross-task flags
+RESET_REQUESTED = False
+
+
 class Session:
     def __init__(self):
         self.active = False
@@ -40,15 +54,19 @@ class Session:
     def stop(self):
         if self.f:
             self.f.close()
+        self.f = None
         self.active = False
 
     def log(self, msg: dict):
         if self.active and self.f:
             self.f.write(json.dumps(msg) + "\n")
 
+
 session = Session()
 
+
 async def broadcast(msg: dict):
+    """Send a message to all connected clients; drop dead sockets."""
     if not clients:
         return
     data = json.dumps(msg)
@@ -56,60 +74,84 @@ async def broadcast(msg: dict):
     for ws in clients:
         try:
             await ws.send(data)
-        except:
+        except Exception:
             dead.append(ws)
     for ws in dead:
         clients.discard(ws)
 
+
 async def handle_client(ws):
+    """Handle a single UI client connection and incoming commands."""
+    global RESET_REQUESTED
+
     clients.add(ws)
     print("Client connected")
     try:
-        # On connect, send current status
-        await ws.send(json.dumps({
-            "type": "status",
-            "state": STATE_WAITING,
-            "reps": session.reps
-        }))
+        # Send latest snapshot immediately (reconnect/resume)
+        await ws.send(json.dumps(LAST_STATUS))
 
         async for raw in ws:
-            # Handle commands from UI
             try:
                 msg = json.loads(raw)
-            except:
+            except Exception:
                 continue
 
-            if msg.get("type") == "cmd":
-                action = msg.get("action")
+            if msg.get("type") != "cmd":
+                continue
 
-                if action == "start":
-                    if not session.active:
-                        session.start()
-                        await ws.send(json.dumps({"type": "ack", "action": "start", "ok": True, "file": session.filepath}))
-                    else:
-                        await ws.send(json.dumps({"type": "ack", "action": "start", "ok": True, "note": "already_active"}))
+            action = msg.get("action")
 
-                elif action == "stop":
-                    if session.active:
-                        session.stop()
-                    await ws.send(json.dumps({"type": "ack", "action": "stop", "ok": True, "reps": session.reps}))
+            if action == "start":
+                if not session.active:
+                    session.start()
+                    await ws.send(json.dumps({
+                        "type": "ack",
+                        "action": "start",
+                        "ok": True,
+                        "file": session.filepath
+                    }))
+                else:
+                    await ws.send(json.dumps({
+                        "type": "ack",
+                        "action": "start",
+                        "ok": True,
+                        "note": "already_active"
+                    }))
 
-                elif action == "reset":
-                    # Reset rep counter state handled in loop; we just ack here
-                    await ws.send(json.dumps({"type": "ack", "action": "reset", "ok": True}))
+            elif action == "stop":
+                if session.active:
+                    session.stop()
+                await ws.send(json.dumps({
+                    "type": "ack",
+                    "action": "stop",
+                    "ok": True,
+                    "reps": session.reps
+                }))
+
+            elif action == "reset":
+                RESET_REQUESTED = True
+                await ws.send(json.dumps({
+                    "type": "ack",
+                    "action": "reset",
+                    "ok": True
+                }))
 
     finally:
         clients.discard(ws)
         print("Client disconnected")
 
+
 async def imu_loop():
+    """Read IMU continuously, update rep count, broadcast to UI, and log sessions."""
+    global LAST_STATUS, RESET_REQUESTED
+
     imu = IMU()
     imu.init()
 
     # Rep counter (tune threshold later)
     counter = RepCounter(threshold=1200.0, min_rep_time=0.6, alpha=0.2)
 
-    # Simple calibration window (2 seconds baseline)
+    # Simple calibration window (2 seconds)
     calib_secs = 2.0
     calib_start = time.time()
     state = STATE_CALIBRATING
@@ -121,6 +163,13 @@ async def imu_loop():
         while True:
             t = time.time() - t0
 
+            # Handle reset request
+            if RESET_REQUESTED:
+                counter = RepCounter(threshold=1200.0, min_rep_time=0.6, alpha=0.2)
+                session.reps = 0
+                session.reps = 0
+                RESET_REQUESTED = False
+
             try:
                 ax, ay, az, gx, gy, gz = imu.read_accel_gyro()
             except OSError as e:
@@ -129,7 +178,7 @@ async def imu_loop():
                 await asyncio.sleep(0.2)
                 try:
                     imu.init()
-                except:
+                except Exception:
                     pass
                 continue
 
@@ -139,12 +188,9 @@ async def imu_loop():
             # Map rep counter state to UI state names
             mapped = STATE_MOVING if rep_state == "MOVING" else STATE_WAITING
 
-            # Calibration state handling (for UI)
-            if state == STATE_CALIBRATING:
-                if time.time() - calib_start >= calib_secs:
-                    state = mapped
-                else:
-                    state = STATE_CALIBRATING
+            # Calibration state handling
+            if time.time() - calib_start < calib_secs:
+                state = STATE_CALIBRATING
             else:
                 state = mapped
 
@@ -157,6 +203,17 @@ async def imu_loop():
                     "state": state,
                     "gyro_filt": round(filt, 1)
                 }
+
+                # Update snapshot so reconnecting clients get the latest state instantly
+                LAST_STATUS = {
+                    "type": "status",
+                    "state": state,
+                    "reps": reps,
+                    "recording": session.active,
+                    "t": round(t, 3),
+                    "gyro_filt": round(filt, 1)
+                }
+
                 await broadcast(payload)
                 session.log(payload)
                 last_send = t
@@ -166,12 +223,19 @@ async def imu_loop():
     finally:
         imu.close()
 
+
 async def main():
     print(f"WS server listening on ws://{HOST}:{PORT}")
-    server = await websockets.serve(handle_client, HOST, PORT)
+    server = await websockets.serve(
+        handle_client, HOST, PORT,
+        ping_interval=20,
+        ping_timeout=20
+    )
+
     await imu_loop()
     server.close()
     await server.wait_closed()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
