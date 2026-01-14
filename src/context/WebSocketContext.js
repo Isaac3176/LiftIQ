@@ -13,12 +13,31 @@ export function WebSocketProvider({ children }) {
   const [gyroFilt, setGyroFilt] = useState(0);
   const [repEvents, setRepEvents] = useState([]); // Store rep_event history
   const [lastRepEvent, setLastRepEvent] = useState(null); // Latest rep for animation
+  const [currentSessionSummary, setCurrentSessionSummary] = useState(null); // Post-workout summary
   const wsRef = useRef(null);
 
   const handleMessage = (event) => {
     try {
       const data = JSON.parse(event.data);
       setLastMessage(data);
+
+      // Handle session_summary messages (post-workout metrics from server)
+      if (data.type === 'session_summary') {
+        console.log('📊 Session Summary received:', {
+          reps: data.reps,
+          tut: data.tut_sec,
+          avgTempo: data.avg_tempo_sec
+        });
+        
+        setCurrentSessionSummary({
+          reps: data.reps,
+          tutSec: data.tut_sec,
+          avgTempoSec: data.avg_tempo_sec,
+          receivedAt: Date.now()
+        });
+        
+        return; // Don't process further
+      }
 
       // Handle rep_event messages (triggers animation + stores per-rep data)
       if (data.type === 'rep_event') {
@@ -65,7 +84,8 @@ export function WebSocketProvider({ children }) {
           setRepCount(0);
           setIsRecording(true);
           setRepEvents([]); // Clear rep events for new session
-          console.log('✅ Start ACK - Recording enabled');
+          setCurrentSessionSummary(null); // Clear previous summary
+          console.log('✅ Start ACK - Recording enabled, session data cleared');
         } else if (data.action === 'stop') {
           setRepCount(data.reps !== undefined ? data.reps : repCount);
           setIsRecording(false);
@@ -138,6 +158,7 @@ export function WebSocketProvider({ children }) {
       setIsRecording(true);
       setRepCount(0);
       setRepEvents([]); // Clear rep events for new session
+      setCurrentSessionSummary(null); // Clear previous summary
       setLastRepEvent(null);
     }
   };
@@ -163,6 +184,7 @@ export function WebSocketProvider({ children }) {
     gyroFilt,
     repEvents,
     lastRepEvent,
+    currentSessionSummary,
     connect,
     disconnect,
     sendMessage,

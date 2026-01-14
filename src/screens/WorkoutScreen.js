@@ -14,6 +14,7 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
     lastMessage,
     repEvents,
     lastRepEvent,
+    currentSessionSummary,
     startRecording,
     stopRecording,
     disconnect 
@@ -146,13 +147,14 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
       ? repEvents.reduce((sum, e) => sum + e.confidence, 0) / repEvents.length
       : 0;
     
-    // Navigate to summary after brief delay
+    // Navigate to summary after brief delay (wait for session_summary message)
     setTimeout(() => {
       onEndWorkout({
         reps: repCount,
         duration,
         samples: sessionSamples,
         repEvents: repEvents, // Include per-rep data
+        serverSummary: currentSessionSummary, // Include server's summary
         avgRepTime,
         avgConfidence,
         startTime,
@@ -161,7 +163,7 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
         exercise: 'Squat',
         weight: 135,
       });
-    }, 500);
+    }, 1000); // Wait 1 second for session_summary message
   };
 
   const handleDisconnect = () => {
