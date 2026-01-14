@@ -64,12 +64,11 @@ def json_safe(x):
         return [json_safe(v) for v in x]
     if isinstance(x, dict):
         return {str(k): json_safe(v) for k, v in x.items()}
-    # everything else (SMBus, numpy, custom objects...)
     return str(x)
 
 
 # -----------------------------
-# Session manager
+# Session manager + tempo/TUT
 # -----------------------------
 class Session:
     def __init__(self):
@@ -85,6 +84,12 @@ class Session:
         self.end_ts = None
 
         self.reps = 0
+
+        # Tempo + TUT
+        self.moving_time = 0.0          # seconds in MOVING while recording
+        self.rep_times = []             # list of (sec) between reps
+        self._last_motion_t = None      # last t used for TUT accumulation
+        self._last_rep_event_t = None   # last rep_event t
 
     def start(self):
         sid = make_session_id()
@@ -102,6 +107,12 @@ class Session:
         self.reps = 0
         self.active = True
 
+        # Reset metrics
+        self.moving_time = 0.0
+        self.rep_times = []
+        self._last_motion_t = None
+        self._last_rep_event_t = None
+
     def stop(self):
         self.end_ts = time.time()
         if self.f:
@@ -112,6 +123,9 @@ class Session:
         self.f = None
         self.active = False
 
+        # Close out motion timer
+        self._last_motion_t = None
+
     def log(self, msg: dict):
         if self.active and self.f:
             try:
@@ -119,34 +133,69 @@ class Session:
             except Exception:
                 pass
 
+    def update_tut(self, mapped_state: str, t: float):
+        """
+        Accumulate Time Under Tension (TUT) as total time in MOVING while recording.
+        Call this every loop iteration.
+        """
+        if not self.active:
+            self._last_motion_t = None
+            return
+
+        if mapped_state == STATE_MOVING:
+            if self._last_motion_t is None:
+                self._last_motion_t = t
+            else:
+                dt = t - self._last_motion_t
+                if 0 <= dt <= 0.5:  # guard against big jumps
+                    self.moving_time += dt
+                self._last_motion_t = t
+        else:
+            self._last_motion_t = None
+
+    def on_rep_event(self, t: float):
+        """
+        Add rep-to-rep tempo based on rep_event timestamp.
+        """
+        if self._last_rep_event_t is not None:
+            dt = t - self._last_rep_event_t
+            if 0.0 < dt < 20.0:
+                self.rep_times.append(dt)
+        self._last_rep_event_t = t
+
+    def compute_avg_tempo(self):
+        if not self.rep_times:
+            return None
+        return sum(self.rep_times) / len(self.rep_times)
+
     def write_summary(self, *, device_info: dict, thresholds: dict):
         if not self.session_dir:
             return None
 
         start_ts = self.start_ts or time.time()
         end_ts = self.end_ts or time.time()
-        duration_sec = max(0, int(round(end_ts - start_ts)))
+        duration_sec = max(0, float(end_ts - start_ts))
         total_reps = int(self.reps)
 
-        # placeholders
-        avg_rep_time_sec = (duration_sec / total_reps) if total_reps > 0 else 0.0
-        tut_sec = 0
+        avg_tempo = self.compute_avg_tempo()
 
         # IMPORTANT: sanitize to prevent SMBus crash
         device_info = json_safe(device_info or {})
         thresholds = json_safe(thresholds or {})
 
         summary = {
-            "version": 1,
+            "version": 2,
             "session_id": self.session_id,
 
             "start_time": iso_from_ts(start_ts),
             "end_time": iso_from_ts(end_ts),
-            "duration_sec": duration_sec,
+            "duration_sec": float(round(duration_sec, 3)),
             "total_reps": total_reps,
 
-            "avg_rep_time_sec": float(round(avg_rep_time_sec, 3)),
-            "tut_sec": int(tut_sec),
+            # New metrics
+            "tut_sec": float(round(self.moving_time, 3)),
+            "avg_tempo_sec": None if avg_tempo is None else float(round(avg_tempo, 3)),
+            "rep_times_sec": [float(round(x, 3)) for x in self.rep_times],
 
             "device_info": device_info,
             "thresholds": thresholds,
@@ -237,12 +286,12 @@ async def handle_client(ws):
                 if session.active:
                     session.stop()
 
-                    # Summary JSON write happens HERE
                     summary_path = session.write_summary(
                         device_info=SERVER_DEVICE_INFO,
                         thresholds=SERVER_THRESHOLDS
                     )
 
+                    # send both ack + summary
                     await ws.send(json.dumps({
                         "type": "ack",
                         "action": "stop",
@@ -251,6 +300,17 @@ async def handle_client(ws):
                         "session_id": session.session_id,
                         "summary": summary_path
                     }))
+
+                    await ws.send(json.dumps({
+                        "type": "session_summary",
+                        "session_id": session.session_id,
+                        "reps": session.reps,
+                        "tut_sec": float(round(session.moving_time, 3)),
+                        "avg_tempo_sec": session.compute_avg_tempo() if session.compute_avg_tempo() is None else float(round(session.compute_avg_tempo(), 3)),
+                        "rep_times_sec": [float(round(x, 3)) for x in session.rep_times],
+                        "summary": summary_path
+                    }))
+
                 else:
                     await ws.send(json.dumps({
                         "type": "ack",
@@ -308,20 +368,16 @@ async def imu_loop():
             imu = IMU()
 
     # ----- Device info (must be JSON safe) -----
-    # WARNING: imu.bus may be an SMBus object -> DO NOT store it raw.
     imu_addr = safe_getattr(imu, "addr", None) or safe_getattr(imu, "address", None)
     i2c_bus = safe_getattr(imu, "i2c_bus", None) or safe_getattr(imu, "bus_num", None)
 
-    # If someone exposed imu.bus (SMBus object), stringify it safely:
     bus_obj = safe_getattr(imu, "bus", None)
     if i2c_bus is None and bus_obj is not None:
-        # try best-effort to detect bus number from the object
         possible_num = safe_getattr(bus_obj, "bus", None) or safe_getattr(bus_obj, "fd", None)
         i2c_bus = possible_num if possible_num is not None else str(bus_obj)
 
     sample_rate_hz = safe_getattr(imu, "sample_rate_hz", None) or safe_getattr(imu, "rate_hz", None)
 
-    # defaults if unknown
     try:
         imu_addr_int = int(imu_addr) if imu_addr is not None else 0
         imu_addr_str = f"0x{imu_addr_int:02X}" if imu_addr is not None else "unknown"
@@ -349,6 +405,9 @@ async def imu_loop():
     last_send = 0.0
     was_recording = False
 
+    # rep_event tracking
+    last_session_reps = 0
+
     # error throttling
     consecutive_failures = 0
     last_error_sent = 0.0
@@ -361,6 +420,11 @@ async def imu_loop():
                 live_counter = RepCounter(threshold=THRESHOLD, min_rep_time=MIN_REP_TIME, alpha=ALPHA)
                 session_counter = RepCounter(threshold=THRESHOLD, min_rep_time=MIN_REP_TIME, alpha=ALPHA)
                 session.reps = 0
+                session.moving_time = 0.0
+                session.rep_times = []
+                session._last_motion_t = None
+                session._last_rep_event_t = None
+                last_session_reps = 0
                 RESET_REQUESTED = False
 
             try:
@@ -394,6 +458,9 @@ async def imu_loop():
             _lr, live_filt, live_state = live_counter.update(gx, gy, gz, t)
             mapped = STATE_MOVING if live_state == "MOVING" else STATE_WAITING
 
+            # update TUT (uses mapped state, and only accumulates while session.active)
+            session.update_tut(mapped, t)
+
             ui_state = STATE_CALIBRATING if (time.time() - calib_start < calib_secs) else mapped
 
             # start transition
@@ -401,6 +468,11 @@ async def imu_loop():
                 print("Recording STARTED")
                 session_counter = RepCounter(threshold=THRESHOLD, min_rep_time=MIN_REP_TIME, alpha=ALPHA)
                 session.reps = 0
+                session.moving_time = 0.0
+                session.rep_times = []
+                session._last_motion_t = None
+                session._last_rep_event_t = None
+                last_session_reps = 0
 
             # stop transition
             if (not session.active) and was_recording:
@@ -411,24 +483,45 @@ async def imu_loop():
             # count only if recording
             if session.active:
                 reps, _sf, _ss = session_counter.update(gx, gy, gz, t)
+
+                # new rep => rep_event + tempo tracking
+                if reps > last_session_reps:
+                    session.on_rep_event(t)
+
+                    # simple confidence heuristic (placeholder)
+                    confidence = min(1.0, max(0.0, abs(live_filt) / 2000.0))
+
+                    rep_event = {
+                        "type": "rep_event",
+                        "rep": int(reps),
+                        "t": round(t, 3),
+                        "confidence": round(confidence, 2),
+                    }
+                    await broadcast(rep_event)
+                    session.log(rep_event)
+
                 session.reps = reps
+                last_session_reps = reps
 
             # broadcast 10 Hz
             if t - last_send >= 0.1:
                 payload = {
                     "type": "rep_update",
                     "t": round(t, 3),
-                    "reps": session.reps,
+                    "reps": int(session.reps),
                     "state": ui_state,
-                    "recording": session.active,
+                    "recording": bool(session.active),
                     "gyro_filt": round(live_filt, 1),
+                    # optional live metrics (nice for UI display)
+                    "tut_sec": round(session.moving_time, 2),
+                    "avg_tempo_sec": None if session.compute_avg_tempo() is None else round(session.compute_avg_tempo(), 2),
                 }
 
                 LAST_STATUS = {
                     "type": "status",
                     "state": ui_state,
-                    "reps": session.reps,
-                    "recording": session.active,
+                    "reps": int(session.reps),
+                    "recording": bool(session.active),
                     "t": round(t, 3),
                     "gyro_filt": round(live_filt, 1),
                 }
