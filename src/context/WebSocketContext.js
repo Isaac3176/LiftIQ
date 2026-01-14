@@ -26,13 +26,15 @@ export function WebSocketProvider({ children }) {
         console.log('📊 Session Summary received:', {
           reps: data.reps,
           tut: data.tut_sec,
-          avgTempo: data.avg_tempo_sec
+          avgTempo: data.avg_tempo_sec,
+          repBreakdown: data.rep_breakdown?.length || 0
         });
         
         setCurrentSessionSummary({
           reps: data.reps,
           tutSec: data.tut_sec,
           avgTempoSec: data.avg_tempo_sec,
+          repBreakdown: data.rep_breakdown || [],
           receivedAt: Date.now()
         });
         
