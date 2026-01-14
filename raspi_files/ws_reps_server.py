@@ -52,10 +52,6 @@ def safe_getattr(obj, name, default=None):
         return default
 
 def json_safe(x):
-    """
-    Recursively convert any non-JSON-serializable objects (e.g., SMBus)
-    into strings so json.dump never crashes.
-    """
     if x is None:
         return None
     if isinstance(x, (str, int, float, bool)):
@@ -66,9 +62,27 @@ def json_safe(x):
         return {str(k): json_safe(v) for k, v in x.items()}
     return str(x)
 
+def clamp(v, lo, hi):
+    return lo if v < lo else hi if v > hi else v
+
+def compute_output_loss_pct(peaks):
+    """
+    peaks: list[float] peak gyro per rep
+    output loss = (1 - last/first) * 100
+    If last > first, loss is 0 (no loss).
+    """
+    if not peaks or len(peaks) < 2:
+        return None
+    first = peaks[0]
+    last = peaks[-1]
+    if first <= 0:
+        return None
+    loss = (1.0 - (last / first)) * 100.0
+    return round(clamp(loss, 0.0, 100.0), 2)
+
 
 # -----------------------------
-# Session manager + tempo/TUT
+# Session manager + tempo/TUT + fatigue proxy
 # -----------------------------
 class Session:
     def __init__(self):
@@ -86,10 +100,15 @@ class Session:
         self.reps = 0
 
         # Tempo + TUT
-        self.moving_time = 0.0          # seconds in MOVING while recording
-        self.rep_times = []             # list of (sec) between reps
-        self._last_motion_t = None      # last t used for TUT accumulation
-        self._last_rep_event_t = None   # last rep_event t
+        self.moving_time = 0.0
+        self.rep_times = []             # list dt between reps (sec)
+        self.rep_breakdown = []         # list of {rep, tempo_sec, t}
+        self._last_motion_t = None
+        self._last_rep_event_t = None
+
+        # Fatigue proxy (peak gyro per rep)
+        self.peak_gyro_per_rep = []     # list of peak values (abs filtered gyro) per rep
+        self._current_rep_peak = 0.0    # peak accumulator for current rep window
 
     def start(self):
         sid = make_session_id()
@@ -110,8 +129,12 @@ class Session:
         # Reset metrics
         self.moving_time = 0.0
         self.rep_times = []
+        self.rep_breakdown = []
         self._last_motion_t = None
         self._last_rep_event_t = None
+
+        self.peak_gyro_per_rep = []
+        self._current_rep_peak = 0.0
 
     def stop(self):
         self.end_ts = time.time()
@@ -122,8 +145,6 @@ class Session:
                 pass
         self.f = None
         self.active = False
-
-        # Close out motion timer
         self._last_motion_t = None
 
     def log(self, msg: dict):
@@ -134,10 +155,6 @@ class Session:
                 pass
 
     def update_tut(self, mapped_state: str, t: float):
-        """
-        Accumulate Time Under Tension (TUT) as total time in MOVING while recording.
-        Call this every loop iteration.
-        """
         if not self.active:
             self._last_motion_t = None
             return
@@ -147,20 +164,43 @@ class Session:
                 self._last_motion_t = t
             else:
                 dt = t - self._last_motion_t
-                if 0 <= dt <= 0.5:  # guard against big jumps
+                if 0 <= dt <= 0.5:
                     self.moving_time += dt
                 self._last_motion_t = t
         else:
             self._last_motion_t = None
 
-    def on_rep_event(self, t: float):
+    def update_peak(self, live_filt_abs: float):
         """
-        Add rep-to-rep tempo based on rep_event timestamp.
+        Accumulate peak output for the current rep window while recording.
+        """
+        if not self.active:
+            return
+        if live_filt_abs > self._current_rep_peak:
+            self._current_rep_peak = live_filt_abs
+
+    def finalize_rep_peak(self):
+        """
+        Called when a rep is detected: store peak for that rep and reset accumulator.
+        """
+        peak = float(round(self._current_rep_peak, 2))
+        self.peak_gyro_per_rep.append(peak)
+        self._current_rep_peak = 0.0
+        return peak
+
+    def on_rep_event(self, rep_index: int, t: float):
+        """
+        Tempo breakdown: dt between this rep and previous rep.
         """
         if self._last_rep_event_t is not None:
             dt = t - self._last_rep_event_t
             if 0.0 < dt < 20.0:
                 self.rep_times.append(dt)
+                self.rep_breakdown.append({
+                    "rep": int(rep_index),
+                    "tempo_sec": float(round(dt, 3)),
+                    "t": float(round(t, 3)),
+                })
         self._last_rep_event_t = t
 
     def compute_avg_tempo(self):
@@ -178,13 +218,13 @@ class Session:
         total_reps = int(self.reps)
 
         avg_tempo = self.compute_avg_tempo()
+        output_loss = compute_output_loss_pct(self.peak_gyro_per_rep)
 
-        # IMPORTANT: sanitize to prevent SMBus crash
         device_info = json_safe(device_info or {})
         thresholds = json_safe(thresholds or {})
 
         summary = {
-            "version": 2,
+            "version": 4,
             "session_id": self.session_id,
 
             "start_time": iso_from_ts(start_ts),
@@ -192,10 +232,15 @@ class Session:
             "duration_sec": float(round(duration_sec, 3)),
             "total_reps": total_reps,
 
-            # New metrics
+            # Tempo/TUT
             "tut_sec": float(round(self.moving_time, 3)),
             "avg_tempo_sec": None if avg_tempo is None else float(round(avg_tempo, 3)),
             "rep_times_sec": [float(round(x, 3)) for x in self.rep_times],
+            "rep_breakdown": self.rep_breakdown,
+
+            # Fatigue proxy
+            "peak_gyro_per_rep": [float(round(x, 2)) for x in self.peak_gyro_per_rep],
+            "output_loss_pct": output_loss,
 
             "device_info": device_info,
             "thresholds": thresholds,
@@ -231,9 +276,6 @@ def is_command_message(msg: dict) -> bool:
     return t in ("cmd", "command")
 
 
-# -----------------------------
-# Server-level device + thresholds
-# -----------------------------
 SERVER_DEVICE_INFO = {}
 SERVER_THRESHOLDS = {}
 
@@ -291,7 +333,6 @@ async def handle_client(ws):
                         thresholds=SERVER_THRESHOLDS
                     )
 
-                    # send both ack + summary
                     await ws.send(json.dumps({
                         "type": "ack",
                         "action": "stop",
@@ -305,9 +346,15 @@ async def handle_client(ws):
                         "type": "session_summary",
                         "session_id": session.session_id,
                         "reps": session.reps,
+
                         "tut_sec": float(round(session.moving_time, 3)),
-                        "avg_tempo_sec": session.compute_avg_tempo() if session.compute_avg_tempo() is None else float(round(session.compute_avg_tempo(), 3)),
+                        "avg_tempo_sec": None if session.compute_avg_tempo() is None else float(round(session.compute_avg_tempo(), 3)),
                         "rep_times_sec": [float(round(x, 3)) for x in session.rep_times],
+                        "rep_breakdown": session.rep_breakdown,
+
+                        "peak_gyro_per_rep": [float(round(x, 2)) for x in session.peak_gyro_per_rep],
+                        "output_loss_pct": compute_output_loss_pct(session.peak_gyro_per_rep),
+
                         "summary": summary_path
                     }))
 
@@ -367,10 +414,9 @@ async def imu_loop():
             await asyncio.sleep(0.5)
             imu = IMU()
 
-    # ----- Device info (must be JSON safe) -----
+    # device info
     imu_addr = safe_getattr(imu, "addr", None) or safe_getattr(imu, "address", None)
     i2c_bus = safe_getattr(imu, "i2c_bus", None) or safe_getattr(imu, "bus_num", None)
-
     bus_obj = safe_getattr(imu, "bus", None)
     if i2c_bus is None and bus_obj is not None:
         possible_num = safe_getattr(bus_obj, "bus", None) or safe_getattr(bus_obj, "fd", None)
@@ -405,7 +451,6 @@ async def imu_loop():
     last_send = 0.0
     was_recording = False
 
-    # rep_event tracking
     last_session_reps = 0
 
     # error throttling
@@ -419,11 +464,16 @@ async def imu_loop():
             if RESET_REQUESTED:
                 live_counter = RepCounter(threshold=THRESHOLD, min_rep_time=MIN_REP_TIME, alpha=ALPHA)
                 session_counter = RepCounter(threshold=THRESHOLD, min_rep_time=MIN_REP_TIME, alpha=ALPHA)
+
                 session.reps = 0
                 session.moving_time = 0.0
                 session.rep_times = []
+                session.rep_breakdown = []
+                session.peak_gyro_per_rep = []
                 session._last_motion_t = None
                 session._last_rep_event_t = None
+                session._current_rep_peak = 0.0
+
                 last_session_reps = 0
                 RESET_REQUESTED = False
 
@@ -454,12 +504,15 @@ async def imu_loop():
                         await asyncio.sleep(0.25)
                 continue
 
-            # live state
+            # live motion state + filtered signal
             _lr, live_filt, live_state = live_counter.update(gx, gy, gz, t)
             mapped = STATE_MOVING if live_state == "MOVING" else STATE_WAITING
 
-            # update TUT (uses mapped state, and only accumulates while session.active)
+            # TUT accumulation (only when recording)
             session.update_tut(mapped, t)
+
+            # Peak output accumulation (only when recording)
+            session.update_peak(abs(float(live_filt)))
 
             ui_state = STATE_CALIBRATING if (time.time() - calib_start < calib_secs) else mapped
 
@@ -467,11 +520,16 @@ async def imu_loop():
             if session.active and not was_recording:
                 print("Recording STARTED")
                 session_counter = RepCounter(threshold=THRESHOLD, min_rep_time=MIN_REP_TIME, alpha=ALPHA)
+
                 session.reps = 0
                 session.moving_time = 0.0
                 session.rep_times = []
+                session.rep_breakdown = []
+                session.peak_gyro_per_rep = []
                 session._last_motion_t = None
                 session._last_rep_event_t = None
+                session._current_rep_peak = 0.0
+
                 last_session_reps = 0
 
             # stop transition
@@ -480,22 +538,26 @@ async def imu_loop():
 
             was_recording = session.active
 
-            # count only if recording
+            # session reps + rep events
             if session.active:
                 reps, _sf, _ss = session_counter.update(gx, gy, gz, t)
 
-                # new rep => rep_event + tempo tracking
                 if reps > last_session_reps:
-                    session.on_rep_event(t)
+                    # tempo tracking
+                    session.on_rep_event(int(reps), t)
 
-                    # simple confidence heuristic (placeholder)
-                    confidence = min(1.0, max(0.0, abs(live_filt) / 2000.0))
+                    # finalize peak for this rep
+                    peak = session.finalize_rep_peak()
+
+                    # confidence heuristic placeholder
+                    confidence = min(1.0, max(0.0, abs(float(live_filt)) / 2000.0))
 
                     rep_event = {
                         "type": "rep_event",
                         "rep": int(reps),
                         "t": round(t, 3),
                         "confidence": round(confidence, 2),
+                        "peak_gyro": peak,
                     }
                     await broadcast(rep_event)
                     session.log(rep_event)
@@ -503,7 +565,7 @@ async def imu_loop():
                 session.reps = reps
                 last_session_reps = reps
 
-            # broadcast 10 Hz
+            # stream ~10 Hz
             if t - last_send >= 0.1:
                 payload = {
                     "type": "rep_update",
@@ -511,10 +573,12 @@ async def imu_loop():
                     "reps": int(session.reps),
                     "state": ui_state,
                     "recording": bool(session.active),
-                    "gyro_filt": round(live_filt, 1),
-                    # optional live metrics (nice for UI display)
+                    "gyro_filt": round(float(live_filt), 1),
+
+                    # live rollups (nice to display)
                     "tut_sec": round(session.moving_time, 2),
                     "avg_tempo_sec": None if session.compute_avg_tempo() is None else round(session.compute_avg_tempo(), 2),
+                    "output_loss_pct": compute_output_loss_pct(session.peak_gyro_per_rep),
                 }
 
                 LAST_STATUS = {
@@ -523,7 +587,7 @@ async def imu_loop():
                     "reps": int(session.reps),
                     "recording": bool(session.active),
                     "t": round(t, 3),
-                    "gyro_filt": round(live_filt, 1),
+                    "gyro_filt": round(float(live_filt), 1),
                 }
 
                 await broadcast(payload)
