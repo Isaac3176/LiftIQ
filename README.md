@@ -1,4 +1,4 @@
-LiftIQ : Smart Weightlifting Assistant (MVP)
+LiftIQ — Smart Weightlifting Assistant (MVP)
 
 LiftIQ is a hardware-software system that tracks barbell movement in real time using an inertial measurement unit (IMU) and a mobile app. The goal of the project is to explore how low-cost sensors, embedded systems, and on-device analytics can be combined to give meaningful feedback during strength training.
 
