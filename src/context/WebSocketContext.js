@@ -27,7 +27,9 @@ export function WebSocketProvider({ children }) {
           reps: data.reps,
           tut: data.tut_sec,
           avgTempo: data.avg_tempo_sec,
-          repBreakdown: data.rep_breakdown?.length || 0
+          repBreakdown: data.rep_breakdown?.length || 0,
+          peakGyroPerRep: data.peak_gyro_per_rep?.length || 0,
+          outputLossPct: data.output_loss_pct
         });
         
         setCurrentSessionSummary({
@@ -35,6 +37,9 @@ export function WebSocketProvider({ children }) {
           tutSec: data.tut_sec,
           avgTempoSec: data.avg_tempo_sec,
           repBreakdown: data.rep_breakdown || [],
+          // NEW: Store peak gyro per rep array and output loss percentage
+          peakGyroPerRep: data.peak_gyro_per_rep || [],
+          outputLossPct: data.output_loss_pct ?? null, // Use null if not provided
           receivedAt: Date.now()
         });
         
@@ -45,24 +50,27 @@ export function WebSocketProvider({ children }) {
       if (data.type === 'rep_event') {
         console.log('🎯 Rep Event:', {
           rep: data.rep,
-          time: data.rep_time,
-          confidence: data.confidence
+          time: data.t,
+          confidence: data.confidence,
+          peakGyro: data.peak_gyro
         });
         
-        // Store in session history
+        // Store in session history - NOW INCLUDING peak_gyro
         setRepEvents(prev => [...prev, {
           rep: data.rep,
           timestamp: data.t,
-          repTime: data.rep_time,
+          repTime: data.rep_time || data.t, // fallback to t if rep_time not present
           confidence: data.confidence,
+          peakGyro: data.peak_gyro, // NEW: Store peak gyro output for this rep
           receivedAt: Date.now()
         }]);
         
         // Set as latest event (for animation trigger)
         setLastRepEvent({
           rep: data.rep,
-          time: data.rep_time,
-          confidence: data.confidence
+          time: data.t,
+          confidence: data.confidence,
+          peakGyro: data.peak_gyro // NEW: Include peak gyro in latest event
         });
         
         return; // Don't process further

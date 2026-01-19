@@ -63,6 +63,7 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
     ]).start(() => setShowRepFeedback(false));
 
   }, [lastRepEvent, isRecording]);
+
   // Monitor recording state changes
   useEffect(() => {
     if (isRecording && !wasRecording) {
@@ -139,13 +140,16 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
     
     // Calculate average rep time from rep events
     const avgRepTime = repEvents.length > 0
-      ? repEvents.reduce((sum, e) => sum + e.repTime, 0) / repEvents.length
+      ? repEvents.reduce((sum, e) => sum + (e.repTime || 0), 0) / repEvents.length
       : 0;
     
     // Calculate average confidence
     const avgConfidence = repEvents.length > 0
       ? repEvents.reduce((sum, e) => sum + e.confidence, 0) / repEvents.length
       : 0;
+
+    // Extract peak gyro values from rep events (fallback if server summary not received)
+    const peakGyroFromEvents = repEvents.map(e => e.peakGyro).filter(v => v != null);
     
     // Navigate to summary after brief delay (wait for session_summary message)
     setTimeout(() => {
@@ -153,8 +157,9 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
         reps: repCount,
         duration,
         samples: sessionSamples,
-        repEvents: repEvents, // Include per-rep data
-        serverSummary: currentSessionSummary, // Include server's summary
+        repEvents: repEvents, // Include per-rep data with peak_gyro
+        serverSummary: currentSessionSummary, // Include server's summary with peak_gyro_per_rep & output_loss_pct
+        peakGyroFromEvents, // Fallback peak gyro array from rep events
         avgRepTime,
         avgConfidence,
         startTime,
@@ -173,6 +178,12 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
 
   const isConnected = connectionStatus === 'connected';
   const isReconnecting = connectionStatus === 'disconnected' && wasRecording;
+
+  // Format peak gyro for display
+  const formatPeakGyro = (value) => {
+    if (value == null) return 'N/A';
+    return value.toFixed(0);
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -200,7 +211,7 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Rep Feedback Overlay */}
+        {/* Rep Feedback Overlay - NOW WITH PEAK GYRO */}
         {showRepFeedback && lastRepEvent && (
           <Animated.View style={[
             styles.repFeedback,
@@ -218,6 +229,12 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
             <Text style={styles.repFeedbackTime}>
               {lastRepEvent.time?.toFixed(2)}s
             </Text>
+            {/* NEW: Show peak gyro output */}
+            {lastRepEvent.peakGyro != null && (
+              <Text style={styles.repFeedbackPeakGyro}>
+                ⚡ {formatPeakGyro(lastRepEvent.peakGyro)}
+              </Text>
+            )}
             <Text style={styles.repFeedbackConfidence}>
               {(lastRepEvent.confidence * 100).toFixed(0)}% confidence
             </Text>
@@ -300,81 +317,94 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
                 </Text>
               </View>
               <View style={styles.serverStatusItem}>
-                <Text style={styles.serverStatusLabel}>Server Reps:</Text>
-                <Text style={styles.serverStatusValue}>{repCount}</Text>
-              </View>
-              <View style={styles.serverStatusItem}>
                 <Text style={styles.serverStatusLabel}>State:</Text>
-                <Text style={styles.serverStatusValue}>{currentState}</Text>
+                <Text style={styles.serverStatusValue}>
+                  {currentState}
+                </Text>
               </View>
               <View style={styles.serverStatusItem}>
-                <Text style={styles.serverStatusLabel}>Gyro Filt:</Text>
+                <Text style={styles.serverStatusLabel}>Reps:</Text>
+                <Text style={styles.serverStatusValue}>
+                  {repCount}
+                </Text>
+              </View>
+              <View style={styles.serverStatusItem}>
+                <Text style={styles.serverStatusLabel}>Gyro:</Text>
                 <Text style={styles.serverStatusValue}>
                   {gyroFilt.toFixed(1)}
                 </Text>
               </View>
             </View>
             
-            {/* Latest Rep Event Debug Info */}
-            {lastRepEvent && isRecording && (
+            {/* NEW: Show last rep peak gyro in debug panel */}
+            {lastRepEvent && lastRepEvent.peakGyro != null && (
               <View style={styles.repEventDebug}>
-                <Text style={styles.repEventDebugTitle}>Latest Rep Event:</Text>
+                <Text style={styles.repEventDebugTitle}>Last Rep Output (Gyro Proxy):</Text>
                 <Text style={styles.repEventDebugText}>
-                  Rep #{lastRepEvent.rep} • {lastRepEvent.time?.toFixed(2)}s • 
-                  {(lastRepEvent.confidence * 100).toFixed(0)}% confidence
+                  Rep {lastRepEvent.rep}: Peak = {formatPeakGyro(lastRepEvent.peakGyro)}
                 </Text>
               </View>
             )}
-            
-            {/* Rep Events Summary */}
+
             {repEvents.length > 0 && (
               <View style={styles.repEventsSummary}>
                 <Text style={styles.repEventsSummaryText}>
-                  {repEvents.length} rep events recorded
+                  📊 {repEvents.length} rep events recorded
+                  {repEvents.some(e => e.peakGyro != null) && 
+                    ` • Avg output: ${formatPeakGyro(
+                      repEvents.filter(e => e.peakGyro != null)
+                        .reduce((sum, e) => sum + e.peakGyro, 0) / 
+                      repEvents.filter(e => e.peakGyro != null).length
+                    )}`
+                  }
                 </Text>
               </View>
             )}
-          </View>
-        )}
-
-        {/* Reconnection Warning */}
-        {isReconnecting && (
-          <View style={styles.reconnectCard}>
-            <Text style={styles.reconnectIcon}>🔄</Text>
-            <Text style={styles.reconnectText}>
-              Connection lost. Attempting to reconnect...
-            </Text>
-            <Text style={styles.reconnectSubtext}>
-              Your session data is preserved
-            </Text>
           </View>
         )}
 
         {/* Not Connected Warning */}
         {!isConnected && !isReconnecting && (
           <View style={styles.notConnectedCard}>
-            <Text style={styles.notConnectedIcon}>⚠️</Text>
+            <Text style={styles.notConnectedIcon}>📡</Text>
             <Text style={styles.notConnectedText}>
-              Connection lost. Please return to connect screen.
+              Connection lost. Please reconnect.
+            </Text>
+          </View>
+        )}
+
+        {/* Reconnecting Indicator */}
+        {isReconnecting && (
+          <View style={styles.reconnectCard}>
+            <Text style={styles.reconnectIcon}>🔄</Text>
+            <Text style={styles.reconnectText}>
+              Attempting to reconnect...
+            </Text>
+            <Text style={styles.reconnectSubtext}>
+              Your rep count ({repCount}) is preserved
             </Text>
           </View>
         )}
       </ScrollView>
 
+      {/* Footer with Start/Stop Button */}
       <View style={styles.footer}>
         {!isRecording ? (
           <TouchableOpacity 
-            style={[styles.startButton, !isConnected && styles.buttonDisabled]} 
+            style={[styles.startButton, !isConnected && styles.buttonDisabled]}
             onPress={handleStartWorkout}
             disabled={!isConnected}
           >
             <Text style={styles.startButtonText}>
-              {repCount > 0 ? 'Start New Session' : 'Start Workout'}
+              {repCount > 0 ? 'Start New Set' : 'Start Workout'}
             </Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity style={styles.stopButton} onPress={handleStopWorkout}>
-            <Text style={styles.stopButtonText}>Stop Workout</Text>
+          <TouchableOpacity 
+            style={styles.stopButton}
+            onPress={handleStopWorkout}
+          >
+            <Text style={styles.stopButtonText}>Stop & View Summary</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -389,23 +419,21 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
-    paddingTop: 10,
+    padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#222',
   },
   backButtonContainer: {
     padding: 8,
-    marginRight: 12,
+    marginRight: 8,
   },
   backButtonText: {
-    fontSize: 28,
+    fontSize: 24,
     color: '#fff',
   },
   headerTitle: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#fff',
   },
@@ -468,6 +496,17 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#fff',
     marginBottom: 4,
+  },
+  // NEW: Peak gyro display in rep feedback
+  repFeedbackPeakGyro: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 4,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 8,
   },
   repFeedbackConfidence: {
     fontSize: 14,
