@@ -55,13 +55,13 @@ export function WebSocketProvider({ children }) {
           peakGyro: data.peak_gyro
         });
         
-        // Store in session history - NOW INCLUDING peak_gyro
+        // Store in session history - INCLUDING peak_gyro
         setRepEvents(prev => [...prev, {
           rep: data.rep,
           timestamp: data.t,
           repTime: data.rep_time || data.t, // fallback to t if rep_time not present
           confidence: data.confidence,
-          peakGyro: data.peak_gyro, // NEW: Store peak gyro output for this rep
+          peakGyro: data.peak_gyro, // Store peak gyro output for this rep
           receivedAt: Date.now()
         }]);
         
@@ -70,7 +70,7 @@ export function WebSocketProvider({ children }) {
           rep: data.rep,
           time: data.t,
           confidence: data.confidence,
-          peakGyro: data.peak_gyro // NEW: Include peak gyro in latest event
+          peakGyro: data.peak_gyro // Include peak gyro in latest event
         });
         
         return; // Don't process further
@@ -163,8 +163,7 @@ export function WebSocketProvider({ children }) {
     const sent = sendMessage({ type: 'command', action: 'start' });
     if (sent) {
       console.log('📤 Sent START command to server');
-      console.log('⚠️ Server does not acknowledge START - using client-side recording state');
-      // Set recording state immediately (server doesn't respond properly)
+      // Set recording state immediately
       setIsRecording(true);
       setRepCount(0);
       setRepEvents([]); // Clear rep events for new session
@@ -178,8 +177,7 @@ export function WebSocketProvider({ children }) {
     const sent = sendMessage({ type: 'command', action: 'stop' });
     if (sent) {
       console.log('📤 Sent STOP command to server');
-      console.log('⚠️ Server does not acknowledge STOP - using client-side recording state');
-      // Set recording state immediately (server doesn't respond properly)
+      // Set recording state immediately
       setIsRecording(false);
     }
   };
