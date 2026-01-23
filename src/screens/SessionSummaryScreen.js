@@ -3,160 +3,97 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, Sta
 import Svg, { Circle, Line, Polyline, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 export default function SessionSummaryScreen({ sessionData, onViewHistory, onBackToDashboard }) {
-  // Get peak gyro data from server summary or fallback to rep events
+  // Source of truth: server's session_summary
   const serverSummary = sessionData?.serverSummary;
-  const peakGyroPerRep = serverSummary?.peakGyroPerRep || sessionData?.peakGyroFromEvents || [];
+  
+  // Use server data if available
+  const totalReps = serverSummary?.totalReps ?? sessionData?.reps ?? 0;
+  const tutSec = serverSummary?.tutSec ?? null;
+  const avgTempoSec = serverSummary?.avgTempoSec ?? null;
+  const repTimesSec = serverSummary?.repTimesSec || [];
+  const repBreakdown = serverSummary?.repBreakdown || [];
   const outputLossPct = serverSummary?.outputLossPct ?? null;
+  const peakGyroPerRep = serverSummary?.peakGyroPerRep || [];
+  const sessionId = serverSummary?.sessionId;
 
-  // Placeholder velocity data (existing)
-  const velocityData = [0.32, 0.31, 0.29, 0.28, 0.26, 0.24, 0.22, 0.20];
-  const barPathData = [
-    { x: 50, y: 100 },
-    { x: 52, y: 80 },
-    { x: 50, y: 60 },
-    { x: 48, y: 40 },
-    { x: 50, y: 20 }
-  ];
+  // Calculate tempo stats from rep_times_sec (do NOT recompute avg - use server's)
+  const fastestTempo = repTimesSec.length > 0 ? Math.min(...repTimesSec) : null;
+  const slowestTempo = repTimesSec.length > 0 ? Math.max(...repTimesSec) : null;
+  
+  // Tempo consistency (standard deviation)
+  const tempoStdDev = (() => {
+    if (repTimesSec.length < 2) return null;
+    const mean = repTimesSec.reduce((a, b) => a + b, 0) / repTimesSec.length;
+    const squareDiffs = repTimesSec.map(t => Math.pow(t - mean, 2));
+    const avgSquareDiff = squareDiffs.reduce((a, b) => a + b, 0) / repTimesSec.length;
+    return Math.sqrt(avgSquareDiff);
+  })();
+
+  // Format helpers
+  const formatValue = (value, decimals = 2, suffix = '') => {
+    if (value == null || value === undefined) return '—';
+    return `${Number(value).toFixed(decimals)}${suffix}`;
+  };
 
   const formatDuration = (seconds) => {
+    if (seconds == null) return '—';
     const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
+    const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Get fatigue interpretation based on output loss percentage
-  const getFatigueInterpretation = (lossPct) => {
-    if (lossPct === null || lossPct === undefined) {
-      return { level: 'Unknown', color: '#888', message: 'Not enough data to calculate fatigue' };
-    }
-    if (lossPct < 10) {
-      return { level: 'Strong Endurance', color: '#4CAF50', message: 'Excellent output consistency. You maintained power throughout the set.' };
-    }
-    if (lossPct <= 20) {
-      return { level: 'Normal Fatigue', color: '#FFC107', message: 'Typical fatigue pattern. Good set intensity.' };
-    }
-    return { level: 'High Fatigue', color: '#ff4444', message: 'Significant output drop detected. Consider reducing volume or stopping earlier next set.' };
+  // Fatigue interpretation
+  const getFatigueInfo = (lossPct) => {
+    if (lossPct == null) return { level: 'Unknown', color: '#888', message: 'Not enough data' };
+    if (lossPct < 10) return { level: 'Strong Endurance', color: '#4CAF50', message: 'Excellent output consistency' };
+    if (lossPct <= 20) return { level: 'Normal Fatigue', color: '#FFC107', message: 'Typical fatigue pattern' };
+    return { level: 'High Fatigue', color: '#ff4444', message: 'Consider reducing volume next set' };
   };
+  const fatigueInfo = getFatigueInfo(outputLossPct);
 
-  const fatigueInfo = getFatigueInterpretation(outputLossPct);
-
-  const renderVelocityChart = () => {
-    const points = velocityData.map((value, index) => {
-      const x = 20 + (index / (velocityData.length - 1)) * 260;
-      const y = 80 - (value / 0.4) * 60;
-      return `${x},${y}`;
-    }).join(' ');
-
-    return (
-      <Svg width={300} height={100}>
-        <Line x1={20} y1={80} x2={280} y2={80} stroke="#333" strokeWidth="1" />
-        <Polyline
-          points={points}
-          fill="none"
-          stroke="#4CAF50"
-          strokeWidth="3"
-        />
-        {velocityData.map((value, index) => {
-          const x = 20 + (index / (velocityData.length - 1)) * 260;
-          const y = 80 - (value / 0.4) * 60;
-          return <Circle key={index} cx={x} cy={y} r="4" fill="#4CAF50" />;
-        })}
-      </Svg>
-    );
-  };
-
-  // NEW: Render Peak Gyro Per Rep Chart
+  // Render Peak Gyro Chart
   const renderPeakGyroChart = () => {
     if (!peakGyroPerRep || peakGyroPerRep.length === 0) {
       return (
         <View style={styles.noDataContainer}>
-          <Text style={styles.noDataText}>No peak output data available</Text>
+          <Text style={styles.noDataText}>No peak output data</Text>
         </View>
       );
     }
 
     const maxValue = Math.max(...peakGyroPerRep);
     const minValue = Math.min(...peakGyroPerRep);
-    const padding = (maxValue - minValue) * 0.1 || 100;
-    const chartMax = maxValue + padding;
-    const chartMin = Math.max(0, minValue - padding);
-    const range = chartMax - chartMin || 1;
+    const range = (maxValue - minValue) || 1;
 
     const chartWidth = 300;
-    const chartHeight = 120;
-    const leftPadding = 45;
-    const rightPadding = 15;
-    const topPadding = 10;
-    const bottomPadding = 25;
-    const plotWidth = chartWidth - leftPadding - rightPadding;
-    const plotHeight = chartHeight - topPadding - bottomPadding;
+    const chartHeight = 100;
+    const leftPadding = 40;
+    const bottomPadding = 20;
+    const plotWidth = chartWidth - leftPadding - 10;
+    const plotHeight = chartHeight - bottomPadding - 10;
 
-    const barWidth = Math.max(16, Math.min(35, plotWidth / peakGyroPerRep.length - 6));
-    const barSpacing = (plotWidth - barWidth * peakGyroPerRep.length) / (peakGyroPerRep.length + 1);
+    const barWidth = Math.max(14, Math.min(30, plotWidth / peakGyroPerRep.length - 4));
+    const spacing = (plotWidth - barWidth * peakGyroPerRep.length) / (peakGyroPerRep.length + 1);
 
     return (
       <Svg width={chartWidth} height={chartHeight}>
-        {/* Y-axis line */}
-        <Line 
-          x1={leftPadding} 
-          y1={topPadding} 
-          x2={leftPadding} 
-          y2={chartHeight - bottomPadding} 
-          stroke="#333" 
-          strokeWidth="1" 
-        />
-        {/* X-axis line */}
-        <Line 
-          x1={leftPadding} 
-          y1={chartHeight - bottomPadding} 
-          x2={chartWidth - rightPadding} 
-          y2={chartHeight - bottomPadding} 
-          stroke="#333" 
-          strokeWidth="1" 
-        />
-
-        {/* Y-axis labels */}
-        <SvgText x={leftPadding - 5} y={topPadding + 4} fontSize="9" fill="#666" textAnchor="end">
-          {chartMax.toFixed(0)}
-        </SvgText>
-        <SvgText x={leftPadding - 5} y={chartHeight - bottomPadding} fontSize="9" fill="#666" textAnchor="end">
-          {chartMin.toFixed(0)}
-        </SvgText>
-
-        {/* Bars */}
+        <Line x1={leftPadding} y1={chartHeight - bottomPadding} x2={chartWidth - 10} y2={chartHeight - bottomPadding} stroke="#333" strokeWidth="1" />
+        
         {peakGyroPerRep.map((value, index) => {
-          const barHeight = Math.max(2, ((value - chartMin) / range) * plotHeight);
-          const x = leftPadding + barSpacing + index * (barWidth + barSpacing);
+          const barHeight = Math.max(4, ((value - minValue) / range) * plotHeight);
+          const x = leftPadding + spacing + index * (barWidth + spacing);
           const y = chartHeight - bottomPadding - barHeight;
           
-          // Color based on decline from first rep
           const firstValue = peakGyroPerRep[0];
-          const declinePercent = firstValue > 0 ? ((firstValue - value) / firstValue) * 100 : 0;
-          let barColor = '#4CAF50'; // Green = good
-          if (declinePercent > 20) {
-            barColor = '#ff4444'; // Red = high fatigue
-          } else if (declinePercent > 10) {
-            barColor = '#FFC107'; // Yellow = moderate fatigue
-          }
+          const decline = firstValue > 0 ? ((firstValue - value) / firstValue) * 100 : 0;
+          let color = '#4CAF50';
+          if (decline > 20) color = '#ff4444';
+          else if (decline > 10) color = '#FFC107';
 
           return (
             <React.Fragment key={index}>
-              <Rect
-                x={x}
-                y={y}
-                width={barWidth}
-                height={barHeight}
-                fill={barColor}
-                rx={3}
-              />
-              {/* Rep number label */}
-              <SvgText 
-                x={x + barWidth / 2} 
-                y={chartHeight - bottomPadding + 14} 
-                fontSize="9" 
-                fill="#888" 
-                textAnchor="middle"
-              >
+              <Rect x={x} y={y} width={barWidth} height={barHeight} fill={color} rx={3} />
+              <SvgText x={x + barWidth/2} y={chartHeight - 5} fontSize="9" fill="#888" textAnchor="middle">
                 {index + 1}
               </SvgText>
             </React.Fragment>
@@ -166,30 +103,10 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
     );
   };
 
-  const renderBarPath = () => {
-    const pathString = barPathData.map((point, i) => 
-      `${i === 0 ? 'M' : 'L'} ${point.x} ${point.y}`
-    ).join(' ');
-
-    return (
-      <Svg width={100} height={120}>
-        <Line x1={50} y1={0} x2={50} y2={120} stroke="#333" strokeWidth="1" strokeDasharray="5,5" />
-        <Path
-          d={pathString}
-          fill="none"
-          stroke="#2196F3"
-          strokeWidth="3"
-        />
-        {barPathData.map((point, index) => (
-          <Circle key={index} cx={point.x} cy={point.y} r="3" fill="#2196F3" />
-        ))}
-      </Svg>
-    );
-  };
-
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
+      
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onBackToDashboard}>
@@ -200,52 +117,129 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
+        {/* Source indicator */}
+        <View style={styles.sourceIndicator}>
+          <Text style={styles.sourceText}>📡 From Device</Text>
+        </View>
+
         {/* Main Stats */}
         <View style={styles.mainStatsCard}>
           <View style={styles.statRow}>
             <View style={styles.mainStat}>
-              <Text style={styles.mainStatValue}>{sessionData?.reps || 0}</Text>
+              <Text style={styles.mainStatValue}>{totalReps}</Text>
               <Text style={styles.mainStatLabel}>REPS</Text>
             </View>
             <View style={styles.divider} />
             <View style={styles.mainStat}>
-              <Text style={styles.mainStatValue}>{formatDuration(sessionData?.duration || 0)}</Text>
-              <Text style={styles.mainStatLabel}>TIME</Text>
+              <Text style={styles.mainStatValue}>{formatValue(tutSec, 1, 's')}</Text>
+              <Text style={styles.mainStatLabel}>TUT</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.mainStat}>
+              <Text style={styles.mainStatValue}>{formatValue(avgTempoSec, 2, 's')}</Text>
+              <Text style={styles.mainStatLabel}>AVG TEMPO</Text>
             </View>
           </View>
         </View>
 
-        {/* ============================================ */}
-        {/* NEW: Output / Fatigue (Proxy) Section       */}
-        {/* ============================================ */}
+        {/* ====================================== */}
+        {/* REP BREAKDOWN SECTION (HIGH PRIORITY) */}
+        {/* ====================================== */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>📊 Rep Breakdown</Text>
+          
+          {/* Tempo Stats Summary */}
+          <View style={styles.tempoStatsCard}>
+            <View style={styles.tempoStatItem}>
+              <Text style={styles.tempoStatLabel}>Fastest</Text>
+              <Text style={[styles.tempoStatValue, { color: '#4CAF50' }]}>
+                {formatValue(fastestTempo, 2, 's')}
+              </Text>
+            </View>
+            <View style={styles.tempoStatDivider} />
+            <View style={styles.tempoStatItem}>
+              <Text style={styles.tempoStatLabel}>Slowest</Text>
+              <Text style={[styles.tempoStatValue, { color: '#FFC107' }]}>
+                {formatValue(slowestTempo, 2, 's')}
+              </Text>
+            </View>
+            <View style={styles.tempoStatDivider} />
+            <View style={styles.tempoStatItem}>
+              <Text style={styles.tempoStatLabel}>Consistency</Text>
+              <Text style={styles.tempoStatValue}>
+                ±{formatValue(tempoStdDev, 2, 's')}
+              </Text>
+            </View>
+          </View>
+
+          {/* Rep-by-Rep List */}
+          {repTimesSec.length > 0 ? (
+            <View style={styles.repListCard}>
+              {repTimesSec.map((tempo, index) => {
+                const isFastest = tempo === fastestTempo;
+                const isSlowest = tempo === slowestTempo;
+                return (
+                  <View key={index} style={styles.repListRow}>
+                    <Text style={styles.repListRep}>Rep {index + 1}</Text>
+                    <View style={styles.repListRight}>
+                      <Text style={[
+                        styles.repListTempo,
+                        isFastest && styles.fastestTempo,
+                        isSlowest && styles.slowestTempo,
+                      ]}>
+                        {tempo.toFixed(2)}s
+                      </Text>
+                      {isFastest && <Text style={styles.repBadge}>⚡ Fastest</Text>}
+                      {isSlowest && <Text style={styles.repBadgeSlow}>🐢 Slowest</Text>}
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          ) : repBreakdown.length > 0 ? (
+            <View style={styles.repListCard}>
+              {repBreakdown.map((rep, index) => (
+                <View key={index} style={styles.repListRow}>
+                  <Text style={styles.repListRep}>Rep {rep.rep || index + 1}</Text>
+                  <Text style={styles.repListTempo}>
+                    {formatValue(rep.tempo_sec, 2, 's')}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.noDataContainer}>
+              <Text style={styles.noDataText}>No rep breakdown available</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Output / Fatigue Section */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>⚡ Output / Fatigue (Gyro Proxy)</Text>
           
-          {/* Output Loss Card */}
           <View style={[styles.outputLossCard, { borderLeftColor: fatigueInfo.color }]}>
             <View style={styles.outputLossHeader}>
-              <Text style={styles.outputLossLabel}>Output Loss (Proxy)</Text>
+              <Text style={styles.outputLossLabel}>Output Loss</Text>
               <Text style={[styles.outputLossValue, { color: fatigueInfo.color }]}>
-                {outputLossPct !== null ? `${outputLossPct.toFixed(1)}%` : 'N/A'}
+                {formatValue(outputLossPct, 1, '%')}
               </Text>
             </View>
-            <View style={styles.fatigueIndicatorContainer}>
-              <View style={styles.fatigueIndicatorBg}>
-                <View 
-                  style={[
-                    styles.fatigueIndicatorFill, 
-                    { 
-                      width: `${Math.min(100, Math.max(0, outputLossPct || 0) * 3.33)}%`,
-                      backgroundColor: fatigueInfo.color 
-                    }
-                  ]} 
-                />
+            <View style={styles.fatigueBarContainer}>
+              <View style={styles.fatigueBarBg}>
+                <View style={[
+                  styles.fatigueBarFill,
+                  { 
+                    width: `${Math.min(100, (outputLossPct || 0) * 3.33)}%`,
+                    backgroundColor: fatigueInfo.color 
+                  }
+                ]} />
               </View>
               <View style={styles.fatigueMarkers}>
-                <Text style={styles.fatigueMarkerText}>0%</Text>
-                <Text style={styles.fatigueMarkerText}>10%</Text>
-                <Text style={styles.fatigueMarkerText}>20%</Text>
-                <Text style={styles.fatigueMarkerText}>30%+</Text>
+                <Text style={styles.fatigueMarker}>0%</Text>
+                <Text style={styles.fatigueMarker}>10%</Text>
+                <Text style={styles.fatigueMarker}>20%</Text>
+                <Text style={styles.fatigueMarker}>30%</Text>
               </View>
             </View>
             <Text style={[styles.fatigueLevelText, { color: fatigueInfo.color }]}>
@@ -254,192 +248,71 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
             <Text style={styles.fatigueMessage}>{fatigueInfo.message}</Text>
           </View>
 
-          {/* Peak Gyro Per Rep Chart */}
-          <View style={styles.chartCard}>
-            <Text style={styles.chartTitle}>Peak Output Per Rep</Text>
-            {renderPeakGyroChart()}
-            <Text style={styles.chartNote}>
-              Rep 1-{peakGyroPerRep.length || '?'} • Higher = more explosive
-            </Text>
-            <Text style={styles.proxyDisclaimer}>
-              ℹ️ Gyroscope-based proxy, not true bar velocity
-            </Text>
-          </View>
+          {/* Peak Gyro Chart */}
+          {peakGyroPerRep.length > 0 && (
+            <View style={styles.chartCard}>
+              <Text style={styles.chartTitle}>Peak Output Per Rep</Text>
+              {renderPeakGyroChart()}
+              <Text style={styles.chartNote}>Higher = more explosive</Text>
+            </View>
+          )}
         </View>
 
-        {/* Velocity Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🚀 Velocity Analysis</Text>
-          
-          <View style={styles.card}>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Average Velocity</Text>
-              <Text style={styles.metricValue}>0.28 m/s</Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Peak Velocity</Text>
-              <Text style={styles.metricValue}>0.32 m/s</Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Velocity Loss</Text>
-              <Text style={[styles.metricValue, styles.warning]}>37.5%</Text>
-            </View>
-          </View>
-
-          <View style={styles.chartCard}>
-            <Text style={styles.chartTitle}>Velocity per Rep</Text>
-            {renderVelocityChart()}
-            <Text style={styles.chartNote}>Rep 1-8 showing velocity decay</Text>
-          </View>
-        </View>
-
-        {/* Power Output */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>💪 Power Output</Text>
-          
-          <View style={styles.card}>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Average Power</Text>
-              <Text style={styles.metricValue}>405 W</Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Peak Power</Text>
-              <Text style={styles.metricValue}>450 W</Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Power Drop</Text>
-              <Text style={styles.metricValue}>24%</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Bar Path */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📍 Bar Path Analysis</Text>
-          
-          <View style={styles.barPathCard}>
-            <View style={styles.barPathViz}>
-              {renderBarPath()}
-            </View>
-            <View style={styles.barPathMetrics}>
-              <View style={styles.pathMetric}>
-                <Text style={styles.pathLabel}>Horizontal Drift</Text>
-                <Text style={styles.pathValue}>2.4 cm</Text>
-                <Text style={styles.pathStatus}>✓ Good</Text>
-              </View>
-              <View style={styles.pathMetric}>
-                <Text style={styles.pathLabel}>Vertical Efficiency</Text>
-                <Text style={styles.pathValue}>96%</Text>
-                <Text style={styles.pathStatus}>✓ Excellent</Text>
-              </View>
-              <View style={styles.pathMetric}>
-                <Text style={styles.pathLabel}>Arc Angle</Text>
-                <Text style={styles.pathValue}>8.2°</Text>
-                <Text style={styles.pathStatus}>✓ Good</Text>
-              </View>
-            </View>
-          </View>
-        </View>
-
-        {/* ROM & Technique */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📏 Range of Motion</Text>
-          
-          <View style={styles.card}>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Full ROM</Text>
-              <Text style={styles.metricValue}>92%</Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Depth Consistency</Text>
-              <Text style={styles.metricValue}>94%</Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Lockout Quality</Text>
-              <Text style={styles.metricValue}>Excellent</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Tempo & TUT */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>⏱️ Tempo & Time Under Tension</Text>
-          
-          <View style={styles.card}>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Total TUT</Text>
-              <Text style={styles.metricValue}>
-                {serverSummary?.tutSec ? `${serverSummary.tutSec.toFixed(1)} sec` : '42 sec'}
-              </Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Avg Tempo</Text>
-              <Text style={styles.metricValue}>
-                {serverSummary?.avgTempoSec ? `${serverSummary.avgTempoSec.toFixed(2)} sec` : '2.1 sec'}
-              </Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Avg Concentric</Text>
-              <Text style={styles.metricValue}>1.2 sec</Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Avg Eccentric</Text>
-              <Text style={styles.metricValue}>2.1 sec</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Predicted 1RM */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🎯 Estimated 1RM</Text>
-          
-          <View style={styles.e1rmCard}>
-            <Text style={styles.e1rmValue}>185 lbs</Text>
-            <Text style={styles.e1rmNote}>Based on velocity-based training formula</Text>
-            <Text style={styles.e1rmChange}>+5 lbs from last week</Text>
-          </View>
-        </View>
-
-        {/* AI Coaching - Dynamic based on output_loss_pct */}
+        {/* AI Coaching */}
         <View style={styles.coachingCard}>
-          <Text style={styles.coachingTitle}>🤖 AI Coaching Feedback</Text>
+          <Text style={styles.coachingTitle}>🤖 AI Coaching</Text>
+          
+          {outputLossPct != null && outputLossPct > 20 && (
+            <View style={styles.coachingPoint}>
+              <Text style={styles.coachingBullet}>•</Text>
+              <Text style={styles.coachingText}>
+                High fatigue detected ({outputLossPct.toFixed(0)}% drop). Stop sets at 20% loss for strength gains.
+              </Text>
+            </View>
+          )}
+          
+          {outputLossPct != null && outputLossPct < 10 && (
+            <View style={styles.coachingPoint}>
+              <Text style={styles.coachingBullet}>•</Text>
+              <Text style={styles.coachingText}>
+                Strong endurance! You could add more reps or weight next set.
+              </Text>
+            </View>
+          )}
+          
+          {tempoStdDev != null && tempoStdDev < 0.3 && (
+            <View style={styles.coachingPoint}>
+              <Text style={styles.coachingBullet}>•</Text>
+              <Text style={styles.coachingText}>
+                Excellent tempo consistency (±{tempoStdDev.toFixed(2)}s). Great control!
+              </Text>
+            </View>
+          )}
+          
+          {tempoStdDev != null && tempoStdDev > 0.5 && (
+            <View style={styles.coachingPoint}>
+              <Text style={styles.coachingBullet}>•</Text>
+              <Text style={styles.coachingText}>
+                Tempo varied (±{tempoStdDev.toFixed(2)}s). Try to maintain consistent speed.
+              </Text>
+            </View>
+          )}
+          
           <View style={styles.coachingPoint}>
             <Text style={styles.coachingBullet}>•</Text>
             <Text style={styles.coachingText}>
-              Great bar path! Keep that vertical efficiency above 95%.
-            </Text>
-          </View>
-          {outputLossPct !== null && outputLossPct > 20 && (
-            <View style={styles.coachingPoint}>
-              <Text style={styles.coachingBullet}>•</Text>
-              <Text style={styles.coachingText}>
-                Your output dropped {outputLossPct.toFixed(0)}%. Consider stopping at 20% loss for strength gains.
-              </Text>
-            </View>
-          )}
-          {outputLossPct !== null && outputLossPct >= 10 && outputLossPct <= 20 && (
-            <View style={styles.coachingPoint}>
-              <Text style={styles.coachingBullet}>•</Text>
-              <Text style={styles.coachingText}>
-                Normal fatigue pattern ({outputLossPct.toFixed(0)}% drop). Good intensity for hypertrophy.
-              </Text>
-            </View>
-          )}
-          {outputLossPct !== null && outputLossPct < 10 && (
-            <View style={styles.coachingPoint}>
-              <Text style={styles.coachingBullet}>•</Text>
-              <Text style={styles.coachingText}>
-                Excellent output consistency! You could add more reps or weight next set.
-              </Text>
-            </View>
-          )}
-          <View style={styles.coachingPoint}>
-            <Text style={styles.coachingBullet}>•</Text>
-            <Text style={styles.coachingText}>
-              Consistent tempo! Your eccentric control is excellent for hypertrophy.
+              {totalReps} reps completed with {formatValue(tutSec, 1)}s time under tension.
             </Text>
           </View>
         </View>
+
+        {/* Session ID */}
+        {sessionId && (
+          <View style={styles.sessionIdCard}>
+            <Text style={styles.sessionIdLabel}>Session ID</Text>
+            <Text style={styles.sessionIdValue}>{sessionId}</Text>
+          </View>
+        )}
 
         {/* Action Buttons */}
         <TouchableOpacity style={styles.historyButton} onPress={onViewHistory}>
@@ -480,10 +353,23 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 20,
   },
+  sourceIndicator: {
+    alignSelf: 'center',
+    backgroundColor: '#1a2a1a',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  sourceText: {
+    fontSize: 11,
+    color: '#4CAF50',
+    fontWeight: '600',
+  },
   mainStatsCard: {
     backgroundColor: '#1a1a1a',
     borderRadius: 20,
-    padding: 24,
+    padding: 20,
     marginBottom: 24,
   },
   statRow: {
@@ -495,19 +381,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   mainStatValue: {
-    fontSize: 48,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#4CAF50',
   },
   mainStatLabel: {
-    fontSize: 12,
+    fontSize: 10,
     color: '#888',
-    letterSpacing: 2,
+    letterSpacing: 1,
     marginTop: 4,
   },
   divider: {
     width: 1,
-    height: 60,
+    height: 40,
     backgroundColor: '#333',
   },
   section: {
@@ -519,62 +405,76 @@ const styles = StyleSheet.create({
     color: '#fff',
     marginBottom: 12,
   },
-  card: {
+  // Tempo Stats
+  tempoStatsCard: {
+    flexDirection: 'row',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+  },
+  tempoStatItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  tempoStatLabel: {
+    fontSize: 11,
+    color: '#888',
+    marginBottom: 4,
+  },
+  tempoStatValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  tempoStatDivider: {
+    width: 1,
+    backgroundColor: '#333',
+  },
+  // Rep List
+  repListCard: {
     backgroundColor: '#1a1a1a',
     borderRadius: 12,
     padding: 16,
   },
-  metricRow: {
+  repListRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    alignItems: 'center',
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#222',
   },
-  metricLabel: {
+  repListRep: {
     fontSize: 14,
     color: '#888',
   },
-  metricValue: {
+  repListRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  repListTempo: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#fff',
   },
-  warning: {
+  fastestTempo: {
+    color: '#4CAF50',
+  },
+  slowestTempo: {
     color: '#FFC107',
   },
-  chartCard: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
-    padding: 16,
-    marginTop: 12,
-    alignItems: 'center',
+  repBadge: {
+    fontSize: 10,
+    color: '#4CAF50',
+    marginLeft: 8,
   },
-  chartTitle: {
-    fontSize: 14,
-    color: '#888',
-    marginBottom: 16,
+  repBadgeSlow: {
+    fontSize: 10,
+    color: '#FFC107',
+    marginLeft: 8,
   },
-  chartNote: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 12,
-  },
-  proxyDisclaimer: {
-    fontSize: 11,
-    color: '#555',
-    marginTop: 8,
-    fontStyle: 'italic',
-  },
-  noDataContainer: {
-    padding: 24,
-    alignItems: 'center',
-  },
-  noDataText: {
-    color: '#666',
-    fontSize: 14,
-  },
-  // NEW: Output Loss Card styles
+  // Output Loss
   outputLossCard: {
     backgroundColor: '#1a1a1a',
     borderRadius: 12,
@@ -593,97 +493,70 @@ const styles = StyleSheet.create({
     color: '#888',
   },
   outputLossValue: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: 'bold',
   },
-  fatigueIndicatorContainer: {
+  fatigueBarContainer: {
     marginBottom: 12,
   },
-  fatigueIndicatorBg: {
-    height: 12,
+  fatigueBarBg: {
+    height: 10,
     backgroundColor: '#222',
-    borderRadius: 6,
+    borderRadius: 5,
     overflow: 'hidden',
   },
-  fatigueIndicatorFill: {
+  fatigueBarFill: {
     height: '100%',
-    borderRadius: 6,
+    borderRadius: 5,
   },
   fatigueMarkers: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 4,
   },
-  fatigueMarkerText: {
-    fontSize: 10,
+  fatigueMarker: {
+    fontSize: 9,
     color: '#555',
   },
   fatigueLevelText: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   fatigueMessage: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#888',
     textAlign: 'center',
-    lineHeight: 18,
   },
-  barPathCard: {
+  // Chart
+  chartCard: {
     backgroundColor: '#1a1a1a',
     borderRadius: 12,
     padding: 16,
-    flexDirection: 'row',
-  },
-  barPathViz: {
-    flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
   },
-  barPathMetrics: {
-    flex: 2,
-    paddingLeft: 16,
-  },
-  pathMetric: {
-    marginBottom: 16,
-  },
-  pathLabel: {
-    fontSize: 12,
+  chartTitle: {
+    fontSize: 13,
     color: '#888',
+    marginBottom: 12,
   },
-  pathValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginTop: 2,
+  chartNote: {
+    fontSize: 11,
+    color: '#555',
+    marginTop: 8,
   },
-  pathStatus: {
-    fontSize: 12,
-    color: '#4CAF50',
-    marginTop: 2,
-  },
-  e1rmCard: {
+  noDataContainer: {
     backgroundColor: '#1a1a1a',
     borderRadius: 12,
     padding: 24,
     alignItems: 'center',
   },
-  e1rmValue: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-  },
-  e1rmNote: {
+  noDataText: {
+    color: '#666',
     fontSize: 13,
-    color: '#888',
-    marginTop: 8,
   },
-  e1rmChange: {
-    fontSize: 14,
-    color: '#4CAF50',
-    marginTop: 4,
-  },
+  // Coaching
   coachingCard: {
     backgroundColor: '#1a3a1a',
     borderRadius: 12,
@@ -700,19 +573,38 @@ const styles = StyleSheet.create({
   },
   coachingPoint: {
     flexDirection: 'row',
-    marginBottom: 12,
+    marginBottom: 10,
   },
   coachingBullet: {
     color: '#4CAF50',
-    fontSize: 16,
+    fontSize: 14,
     marginRight: 8,
   },
   coachingText: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#aaa',
     flex: 1,
-    lineHeight: 20,
+    lineHeight: 18,
   },
+  // Session ID
+  sessionIdCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  sessionIdLabel: {
+    fontSize: 11,
+    color: '#666',
+    marginBottom: 4,
+  },
+  sessionIdValue: {
+    fontSize: 12,
+    color: '#888',
+    fontFamily: 'monospace',
+  },
+  // Buttons
   historyButton: {
     backgroundColor: '#2196F3',
     borderRadius: 12,

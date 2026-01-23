@@ -7,19 +7,29 @@ export function WebSocketProvider({ children }) {
   const [websocket, setWebsocket] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [lastMessage, setLastMessage] = useState(null);
+  
+  // Live data from rep_update (authoritative from server)
   const [repCount, setRepCount] = useState(0);
   const [currentState, setCurrentState] = useState('WAITING');
   const [isRecording, setIsRecording] = useState(false);
   const [gyroFilt, setGyroFilt] = useState(0);
-  const [repEvents, setRepEvents] = useState([]); // Store rep_event history
-  const [lastRepEvent, setLastRepEvent] = useState(null); // Latest rep for animation
-  const [currentSessionSummary, setCurrentSessionSummary] = useState(null); // Post-workout summary
+  // NEW: Live metrics from rep_update
+  const [liveTutSec, setLiveTutSec] = useState(0);
+  const [liveAvgTempoSec, setLiveAvgTempoSec] = useState(null);
+  const [liveOutputLossPct, setLiveOutputLossPct] = useState(null);
   
-  // NEW: Sessions list from server
-  const [sessionsList, setSessionsList] = useState(null); // { count, sessions }
+  // Rep events (for animation and local breakdown)
+  const [repEvents, setRepEvents] = useState([]);
+  const [lastRepEvent, setLastRepEvent] = useState(null);
+  
+  // Session summary (source of truth after Stop)
+  const [currentSessionSummary, setCurrentSessionSummary] = useState(null);
+  
+  // Sessions list from server (for History screen)
+  const [sessionsList, setSessionsList] = useState(null);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   
-  // NEW: Session detail from server
+  // Session detail from server
   const [sessionDetail, setSessionDetail] = useState(null);
   const [sessionDetailLoading, setSessionDetailLoading] = useState(false);
   
@@ -30,31 +40,87 @@ export function WebSocketProvider({ children }) {
       const data = JSON.parse(event.data);
       setLastMessage(data);
 
-      // Handle session_summary messages (post-workout metrics from server)
+      // =============================================
+      // 1️⃣ rep_update - Live stream (~10Hz)
+      // =============================================
+      if (data.type === 'rep_update') {
+        // Authoritative values from server - do NOT compute locally
+        if (data.reps !== undefined) setRepCount(data.reps);
+        if (data.state !== undefined) setCurrentState(data.state);
+        if (data.recording !== undefined) setIsRecording(data.recording);
+        if (data.gyro_filt !== undefined) setGyroFilt(data.gyro_filt);
+        
+        // NEW: Live metrics
+        if (data.tut_sec !== undefined) setLiveTutSec(data.tut_sec);
+        if (data.avg_tempo_sec !== undefined) setLiveAvgTempoSec(data.avg_tempo_sec);
+        if (data.output_loss_pct !== undefined) setLiveOutputLossPct(data.output_loss_pct);
+        
+        return;
+      }
+
+      // =============================================
+      // 2️⃣ rep_event - Once per detected rep
+      // =============================================
+      if (data.type === 'rep_event') {
+        console.log('🎯 Rep Event:', {
+          rep: data.rep,
+          t: data.t,
+          confidence: data.confidence,
+          peakGyro: data.peak_gyro
+        });
+        
+        // Store for breakdown views
+        setRepEvents(prev => [...prev, {
+          rep: data.rep,
+          t: data.t,
+          confidence: data.confidence,
+          peakGyro: data.peak_gyro,
+          receivedAt: Date.now()
+        }]);
+        
+        // Trigger animation
+        setLastRepEvent({
+          rep: data.rep,
+          t: data.t,
+          confidence: data.confidence,
+          peakGyro: data.peak_gyro
+        });
+        
+        return;
+      }
+
+      // =============================================
+      // 3️⃣ session_summary - After Stop Workout
+      // =============================================
       if (data.type === 'session_summary') {
         console.log('📊 Session Summary received:', {
-          reps: data.reps,
-          tut: data.tut_sec,
-          avgTempo: data.avg_tempo_sec,
+          sessionId: data.session_id,
+          totalReps: data.total_reps,
+          tutSec: data.tut_sec,
+          avgTempoSec: data.avg_tempo_sec,
           repBreakdown: data.rep_breakdown?.length || 0,
-          peakGyroPerRep: data.peak_gyro_per_rep?.length || 0,
           outputLossPct: data.output_loss_pct
         });
         
+        // Source of truth for Session Summary screen
         setCurrentSessionSummary({
-          reps: data.reps,
+          sessionId: data.session_id,
+          totalReps: data.total_reps,
           tutSec: data.tut_sec,
           avgTempoSec: data.avg_tempo_sec,
+          repTimesSec: data.rep_times_sec || [],
           repBreakdown: data.rep_breakdown || [],
-          peakGyroPerRep: data.peak_gyro_per_rep || [],
           outputLossPct: data.output_loss_pct ?? null,
+          peakGyroPerRep: data.peak_gyro_per_rep || [],
           receivedAt: Date.now()
         });
         
         return;
       }
 
-      // NEW: Handle sessions_list messages (response to list_sessions)
+      // =============================================
+      // sessions_list - Response to list_sessions
+      // =============================================
       if (data.type === 'sessions_list') {
         console.log('📋 Sessions List received:', {
           count: data.count,
@@ -71,11 +137,12 @@ export function WebSocketProvider({ children }) {
         return;
       }
 
-      // NEW: Handle session_detail messages (response to get_session)
+      // =============================================
+      // session_detail - Response to get_session
+      // =============================================
       if (data.type === 'session_detail') {
         console.log('📄 Session Detail received:', {
-          sessionId: data.summary?.session_id,
-          reps: data.summary?.total_reps
+          sessionId: data.summary?.session_id
         });
         
         setSessionDetail({
@@ -87,60 +154,24 @@ export function WebSocketProvider({ children }) {
         return;
       }
 
-      // Handle rep_event messages (triggers animation + stores per-rep data)
-      if (data.type === 'rep_event') {
-        console.log('🎯 Rep Event:', {
-          rep: data.rep,
-          time: data.t,
-          confidence: data.confidence,
-          peakGyro: data.peak_gyro
-        });
-        
-        setRepEvents(prev => [...prev, {
-          rep: data.rep,
-          timestamp: data.t,
-          repTime: data.rep_time || data.t,
-          confidence: data.confidence,
-          peakGyro: data.peak_gyro,
-          receivedAt: Date.now()
-        }]);
-        
-        setLastRepEvent({
-          rep: data.rep,
-          time: data.t,
-          confidence: data.confidence,
-          peakGyro: data.peak_gyro
-        });
-        
-        return;
-      }
-
-      console.log('📨 Received:', data.type || 'unknown', { 
-        recording: data.recording, 
-        reps: data.reps,
-        state: data.state 
-      });
-
-      // Always update reps and gyro data from rep_update
-      if (data.reps !== undefined) setRepCount(data.reps);
-      if (data.state !== undefined) setCurrentState(data.state);
-      if (data.gyro_filt !== undefined) setGyroFilt(data.gyro_filt);
-
-      // Handle ACK messages (confirmation of Start/Stop)
+      // =============================================
+      // ACK messages (Start/Stop confirmation)
+      // =============================================
       if (data.type === 'ack') {
-        console.log('✅ ACK received:', data.action, data);
+        console.log('✅ ACK received:', data.action);
         if (data.action === 'start') {
-          setRepCount(0);
-          setIsRecording(true);
+          // Clear for new session
           setRepEvents([]);
           setCurrentSessionSummary(null);
-          console.log('✅ Start ACK - Recording enabled, session data cleared');
-        } else if (data.action === 'stop') {
-          setRepCount(data.reps !== undefined ? data.reps : repCount);
-          setIsRecording(false);
-          console.log(`🛑 Stop ACK - Recording disabled`);
+          setLastRepEvent(null);
+          setLiveTutSec(0);
+          setLiveAvgTempoSec(null);
+          setLiveOutputLossPct(null);
         }
+        // Note: recording state comes from rep_update, not ACK
       }
+
+      console.log('📨 Received:', data.type || 'unknown');
       
     } catch (error) {
       console.error('Failed to parse WebSocket message:', error);
@@ -165,7 +196,7 @@ export function WebSocketProvider({ children }) {
     };
 
     ws.onclose = () => {
-      console.log('WebSocket closed - will attempt reconnect');
+      console.log('WebSocket closed');
       setConnectionStatus('disconnected');
       wsRef.current = null;
       setWebsocket(null);
@@ -178,10 +209,14 @@ export function WebSocketProvider({ children }) {
       wsRef.current = null;
       setWebsocket(null);
       setConnectionStatus('disconnected');
+      // Reset live data
       setRepCount(0);
       setCurrentState('WAITING');
       setIsRecording(false);
       setGyroFilt(0);
+      setLiveTutSec(0);
+      setLiveAvgTempoSec(null);
+      setLiveOutputLossPct(null);
     }
   };
 
@@ -195,91 +230,99 @@ export function WebSocketProvider({ children }) {
     }
   }, []);
 
-  // Send Start command to server
-  const startRecording = () => {
+  // Send Start command
+  const startRecording = useCallback(() => {
+    // Clear local state for new session
+    setRepEvents([]);
+    setCurrentSessionSummary(null);
+    setLastRepEvent(null);
+    setLiveTutSec(0);
+    setLiveAvgTempoSec(null);
+    setLiveOutputLossPct(null);
+    
     const sent = sendMessage({ type: 'command', action: 'start' });
     if (sent) {
-      console.log('📤 Sent START command to server');
-      setIsRecording(true);
-      setRepCount(0);
-      setRepEvents([]);
-      setCurrentSessionSummary(null);
-      setLastRepEvent(null);
+      console.log('📤 Sent START command');
     }
-  };
+    return sent;
+  }, [sendMessage]);
 
-  // Send Stop command to server
-  const stopRecording = () => {
+  // Send Stop command
+  const stopRecording = useCallback(() => {
     const sent = sendMessage({ type: 'command', action: 'stop' });
     if (sent) {
-      console.log('📤 Sent STOP command to server');
-      setIsRecording(false);
+      console.log('📤 Sent STOP command');
     }
-  };
+    return sent;
+  }, [sendMessage]);
 
-  // NEW: Request sessions list from server
+  // Request sessions list
   const requestSessions = useCallback((limit = 20) => {
     setSessionsLoading(true);
     const sent = sendMessage({ 
       type: 'cmd', 
       action: 'list_sessions', 
-      limit: limit 
+      limit 
     });
-    if (sent) {
-      console.log('📤 Sent list_sessions request, limit:', limit);
-    } else {
-      setSessionsLoading(false);
-    }
+    if (!sent) setSessionsLoading(false);
     return sent;
   }, [sendMessage]);
 
-  // NEW: Request session detail from server
+  // Request session detail
   const requestSessionDetail = useCallback((sessionId) => {
     setSessionDetailLoading(true);
-    setSessionDetail(null); // Clear previous detail
+    setSessionDetail(null);
     const sent = sendMessage({ 
       type: 'cmd', 
       action: 'get_session', 
       session_id: sessionId 
     });
-    if (sent) {
-      console.log('📤 Sent get_session request, id:', sessionId);
-    } else {
-      setSessionDetailLoading(false);
-    }
+    if (!sent) setSessionDetailLoading(false);
     return sent;
   }, [sendMessage]);
 
-  // NEW: Clear session detail (when navigating away)
+  // Clear session detail
   const clearSessionDetail = useCallback(() => {
     setSessionDetail(null);
     setSessionDetailLoading(false);
   }, []);
 
   const value = {
+    // Connection
     websocket,
     connectionStatus,
     lastMessage,
+    
+    // Live data (authoritative from server)
     repCount,
     currentState,
     isRecording,
     gyroFilt,
+    liveTutSec,
+    liveAvgTempoSec,
+    liveOutputLossPct,
+    
+    // Rep events (for animation)
     repEvents,
     lastRepEvent,
+    
+    // Session summary (source of truth)
     currentSessionSummary,
-    // NEW: Sessions list
+    
+    // Sessions list
     sessionsList,
     sessionsLoading,
-    // NEW: Session detail
+    
+    // Session detail
     sessionDetail,
     sessionDetailLoading,
+    
     // Methods
     connect,
     disconnect,
     sendMessage,
     startRecording,
     stopRecording,
-    // NEW: Session methods
     requestSessions,
     requestSessionDetail,
     clearSessionDetail,

@@ -80,6 +80,104 @@ def compute_output_loss_pct(peaks):
     loss = (1.0 - (last / first)) * 100.0
     return round(clamp(loss, 0.0, 100.0), 2)
 
+def is_command_message(msg: dict) -> bool:
+    t = msg.get("type")
+    return t in ("cmd", "command")
+
+
+# -----------------------------
+# Session history helpers
+# -----------------------------
+def _read_json(path: str):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def list_session_summaries(limit: int = 20):
+    """
+    Returns minimal summary rows, most recent first.
+    Reads summary.json inside each session directory.
+    """
+    rows = []
+
+    try:
+        entries = os.listdir(SESS_DIR)
+    except Exception:
+        entries = []
+
+    for name in entries:
+        if not name.startswith("session_"):
+            continue
+        sdir = os.path.join(SESS_DIR, name)
+        if not os.path.isdir(sdir):
+            continue
+        summary_path = os.path.join(sdir, "summary.json")
+        summary = _read_json(summary_path)
+        if not isinstance(summary, dict):
+            continue
+
+        # Normalize keys across versions
+        session_id = summary.get("session_id") or name.replace("session_", "")
+        start_time = summary.get("start_time")
+        end_time = summary.get("end_time")
+        duration_sec = summary.get("duration_sec")
+        total_reps = summary.get("total_reps") if "total_reps" in summary else summary.get("reps")
+        tut_sec = summary.get("tut_sec")
+        avg_tempo_sec = summary.get("avg_tempo_sec") or summary.get("avg_rep_time_sec")
+        output_loss_pct = summary.get("output_loss_pct")
+
+        rows.append({
+            "session_id": session_id,
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration_sec": duration_sec,
+            "total_reps": total_reps,
+            "tut_sec": tut_sec,
+            "avg_tempo_sec": avg_tempo_sec,
+            "output_loss_pct": output_loss_pct,
+            "summary_path": summary_path,
+            "session_dir": sdir,
+        })
+
+    # Sort by end_time if present; otherwise by folder name (which includes timestamp)
+    def sort_key(r):
+        et = r.get("end_time") or ""
+        return et
+
+    rows.sort(key=sort_key, reverse=True)
+
+    limit = int(limit) if isinstance(limit, (int, float, str)) else 20
+    limit = max(1, min(200, limit))
+    return rows[:limit]
+
+def get_session_detail(session_id: str):
+    """
+    Returns full summary.json for a specific session_id.
+    """
+    if not session_id:
+        return None
+
+    # session_id is stored as in summary.json; directory name is session_<session_id>
+    sdir = os.path.join(SESS_DIR, f"session_{session_id}")
+    summary_path = os.path.join(sdir, "summary.json")
+    summary = _read_json(summary_path)
+    if isinstance(summary, dict):
+        summary["_session_dir"] = sdir
+        summary["_summary_path"] = summary_path
+        return summary
+
+    # fallback: search any session folder and match session_id inside summary
+    for row in list_session_summaries(limit=200):
+        if row.get("session_id") == session_id:
+            summary = _read_json(row.get("summary_path"))
+            if isinstance(summary, dict):
+                summary["_session_dir"] = row.get("session_dir")
+                summary["_summary_path"] = row.get("summary_path")
+                return summary
+    return None
+
 
 # -----------------------------
 # Session manager + tempo/TUT + fatigue proxy
@@ -107,8 +205,8 @@ class Session:
         self._last_rep_event_t = None
 
         # Fatigue proxy (peak gyro per rep)
-        self.peak_gyro_per_rep = []     # list of peak values (abs filtered gyro) per rep
-        self._current_rep_peak = 0.0    # peak accumulator for current rep window
+        self.peak_gyro_per_rep = []     # list of peak values per rep
+        self._current_rep_peak = 0.0
 
     def start(self):
         sid = make_session_id()
@@ -126,7 +224,7 @@ class Session:
         self.reps = 0
         self.active = True
 
-        # Reset metrics
+        # reset metrics
         self.moving_time = 0.0
         self.rep_times = []
         self.rep_breakdown = []
@@ -171,27 +269,18 @@ class Session:
             self._last_motion_t = None
 
     def update_peak(self, live_filt_abs: float):
-        """
-        Accumulate peak output for the current rep window while recording.
-        """
         if not self.active:
             return
         if live_filt_abs > self._current_rep_peak:
             self._current_rep_peak = live_filt_abs
 
     def finalize_rep_peak(self):
-        """
-        Called when a rep is detected: store peak for that rep and reset accumulator.
-        """
         peak = float(round(self._current_rep_peak, 2))
         self.peak_gyro_per_rep.append(peak)
         self._current_rep_peak = 0.0
         return peak
 
     def on_rep_event(self, rep_index: int, t: float):
-        """
-        Tempo breakdown: dt between this rep and previous rep.
-        """
         if self._last_rep_event_t is not None:
             dt = t - self._last_rep_event_t
             if 0.0 < dt < 20.0:
@@ -224,7 +313,7 @@ class Session:
         thresholds = json_safe(thresholds or {})
 
         summary = {
-            "version": 4,
+            "version": 5,
             "session_id": self.session_id,
 
             "start_time": iso_from_ts(start_ts),
@@ -232,13 +321,11 @@ class Session:
             "duration_sec": float(round(duration_sec, 3)),
             "total_reps": total_reps,
 
-            # Tempo/TUT
             "tut_sec": float(round(self.moving_time, 3)),
             "avg_tempo_sec": None if avg_tempo is None else float(round(avg_tempo, 3)),
             "rep_times_sec": [float(round(x, 3)) for x in self.rep_times],
             "rep_breakdown": self.rep_breakdown,
 
-            # Fatigue proxy
             "peak_gyro_per_rep": [float(round(x, 2)) for x in self.peak_gyro_per_rep],
             "output_loss_pct": output_loss,
 
@@ -271,11 +358,9 @@ async def broadcast(msg: dict):
         clients.discard(ws)
 
 
-def is_command_message(msg: dict) -> bool:
-    t = msg.get("type")
-    return t in ("cmd", "command")
-
-
+# -----------------------------
+# Server-level device + thresholds
+# -----------------------------
 SERVER_DEVICE_INFO = {}
 SERVER_THRESHOLDS = {}
 
@@ -301,8 +386,10 @@ async def handle_client(ws):
                 continue
 
             action = msg.get("action")
-            print("CMD received:", action, "raw:", msg)
+            if action:
+                print("CMD received:", action, "raw:", msg)
 
+            # -------- Workout control ----------
             if action == "start":
                 if not session.active:
                     session.start()
@@ -333,6 +420,9 @@ async def handle_client(ws):
                         thresholds=SERVER_THRESHOLDS
                     )
 
+                    output_loss = compute_output_loss_pct(session.peak_gyro_per_rep)
+                    avg_tempo = session.compute_avg_tempo()
+
                     await ws.send(json.dumps({
                         "type": "ack",
                         "action": "stop",
@@ -342,18 +432,19 @@ async def handle_client(ws):
                         "summary": summary_path
                     }))
 
+                    # Also push a session_summary message so UI can show it immediately
                     await ws.send(json.dumps({
                         "type": "session_summary",
                         "session_id": session.session_id,
-                        "reps": session.reps,
+                        "reps": int(session.reps),
 
                         "tut_sec": float(round(session.moving_time, 3)),
-                        "avg_tempo_sec": None if session.compute_avg_tempo() is None else float(round(session.compute_avg_tempo(), 3)),
+                        "avg_tempo_sec": None if avg_tempo is None else float(round(avg_tempo, 3)),
                         "rep_times_sec": [float(round(x, 3)) for x in session.rep_times],
                         "rep_breakdown": session.rep_breakdown,
 
                         "peak_gyro_per_rep": [float(round(x, 2)) for x in session.peak_gyro_per_rep],
-                        "output_loss_pct": compute_output_loss_pct(session.peak_gyro_per_rep),
+                        "output_loss_pct": output_loss,
 
                         "summary": summary_path
                     }))
@@ -374,6 +465,49 @@ async def handle_client(ws):
                     "action": "reset",
                     "ok": True
                 }))
+
+            # -------- History APIs ----------
+            elif action == "list_sessions":
+                limit = msg.get("limit", 20)
+                rows = list_session_summaries(limit=limit)
+
+                # Send only what UI needs for the list view
+                sessions_out = []
+                for r in rows:
+                    sessions_out.append({
+                        "session_id": r.get("session_id"),
+                        "start_time": r.get("start_time"),
+                        "end_time": r.get("end_time"),
+                        "duration_sec": r.get("duration_sec"),
+                        "total_reps": r.get("total_reps"),
+                        "tut_sec": r.get("tut_sec"),
+                        "avg_tempo_sec": r.get("avg_tempo_sec"),
+                        "output_loss_pct": r.get("output_loss_pct"),
+                    })
+
+                await ws.send(json.dumps({
+                    "type": "sessions_list",
+                    "count": len(sessions_out),
+                    "sessions": sessions_out
+                }))
+
+            elif action == "get_session":
+                session_id = msg.get("session_id")
+                detail = get_session_detail(session_id)
+                if detail is None:
+                    await ws.send(json.dumps({
+                        "type": "session_detail",
+                        "ok": False,
+                        "error": "not_found",
+                        "session_id": session_id
+                    }))
+                else:
+                    await ws.send(json.dumps({
+                        "type": "session_detail",
+                        "ok": True,
+                        "session_id": session_id,
+                        "summary": detail
+                    }))
 
     except websockets.exceptions.ConnectionClosed:
         pass
@@ -450,7 +584,6 @@ async def imu_loop():
     t0 = time.time()
     last_send = 0.0
     was_recording = False
-
     last_session_reps = 0
 
     # error throttling
@@ -504,19 +637,16 @@ async def imu_loop():
                         await asyncio.sleep(0.25)
                 continue
 
-            # live motion state + filtered signal
+            # live motion + filtered signal
             _lr, live_filt, live_state = live_counter.update(gx, gy, gz, t)
             mapped = STATE_MOVING if live_state == "MOVING" else STATE_WAITING
-
-            # TUT accumulation (only when recording)
-            session.update_tut(mapped, t)
-
-            # Peak output accumulation (only when recording)
-            session.update_peak(abs(float(live_filt)))
-
             ui_state = STATE_CALIBRATING if (time.time() - calib_start < calib_secs) else mapped
 
-            # start transition
+            # TUT + peak output accumulation (only when recording)
+            session.update_tut(mapped, t)
+            session.update_peak(abs(float(live_filt)))
+
+            # transitions
             if session.active and not was_recording:
                 print("Recording STARTED")
                 session_counter = RepCounter(threshold=THRESHOLD, min_rep_time=MIN_REP_TIME, alpha=ALPHA)
@@ -529,27 +659,21 @@ async def imu_loop():
                 session._last_motion_t = None
                 session._last_rep_event_t = None
                 session._current_rep_peak = 0.0
-
                 last_session_reps = 0
 
-            # stop transition
             if (not session.active) and was_recording:
                 print("Recording STOPPED")
 
             was_recording = session.active
 
-            # session reps + rep events
+            # reps + rep events
             if session.active:
                 reps, _sf, _ss = session_counter.update(gx, gy, gz, t)
 
                 if reps > last_session_reps:
-                    # tempo tracking
                     session.on_rep_event(int(reps), t)
-
-                    # finalize peak for this rep
                     peak = session.finalize_rep_peak()
 
-                    # confidence heuristic placeholder
                     confidence = min(1.0, max(0.0, abs(float(live_filt)) / 2000.0))
 
                     rep_event = {
@@ -565,8 +689,9 @@ async def imu_loop():
                 session.reps = reps
                 last_session_reps = reps
 
-            # stream ~10 Hz
+            # stream ~10Hz
             if t - last_send >= 0.1:
+                avg_tempo = session.compute_avg_tempo()
                 payload = {
                     "type": "rep_update",
                     "t": round(t, 3),
@@ -575,9 +700,8 @@ async def imu_loop():
                     "recording": bool(session.active),
                     "gyro_filt": round(float(live_filt), 1),
 
-                    # live rollups (nice to display)
                     "tut_sec": round(session.moving_time, 2),
-                    "avg_tempo_sec": None if session.compute_avg_tempo() is None else round(session.compute_avg_tempo(), 2),
+                    "avg_tempo_sec": None if avg_tempo is None else round(avg_tempo, 2),
                     "output_loss_pct": compute_output_loss_pct(session.peak_gyro_per_rep),
                 }
 
@@ -603,9 +727,6 @@ async def imu_loop():
             pass
 
 
-# -----------------------------
-# Main
-# -----------------------------
 async def main():
     print(f"WS server listening on ws://{HOST}:{PORT}")
     server = await websockets.serve(
