@@ -1,12 +1,28 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, StatusBar } from 'react-native';
-import Svg, { Circle, Line, Polyline, Path, Rect, Text as SvgText } from 'react-native-svg';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, StatusBar, ActivityIndicator, Alert } from 'react-native';
+import Svg, { Line, Rect, Text as SvgText } from 'react-native-svg';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import { useWebSocket } from '../context/WebSocketContext';
 
 export default function SessionSummaryScreen({ sessionData, onViewHistory, onBackToDashboard }) {
-  // Source of truth: server's session_summary
+  const { 
+    piIpAddress,
+    exportResult, 
+    exportLoading, 
+    requestExportSession, 
+    clearExportResult,
+    buildExportUrl 
+  } = useWebSocket();
+
+  const [downloadProgress, setDownloadProgress] = useState(null);
+  const [shareError, setShareError] = useState(null);
+
+  // Get session data from server summary
   const serverSummary = sessionData?.serverSummary;
   
-  // Use server data if available
+  // Session ID - check multiple sources
+  const sessionId = serverSummary?.sessionId || sessionData?.sessionId || null;
   const totalReps = serverSummary?.totalReps ?? sessionData?.reps ?? 0;
   const tutSec = serverSummary?.tutSec ?? null;
   const avgTempoSec = serverSummary?.avgTempoSec ?? null;
@@ -14,13 +30,20 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
   const repBreakdown = serverSummary?.repBreakdown || [];
   const outputLossPct = serverSummary?.outputLossPct ?? null;
   const peakGyroPerRep = serverSummary?.peakGyroPerRep || [];
-  const sessionId = serverSummary?.sessionId;
 
-  // Calculate tempo stats from rep_times_sec (do NOT recompute avg - use server's)
+  // Debug log
+  useEffect(() => {
+    console.log('SessionSummaryScreen data:', {
+      sessionId,
+      serverSummary,
+      sessionData
+    });
+  }, [sessionId, serverSummary, sessionData]);
+
+  // Calculate tempo stats
   const fastestTempo = repTimesSec.length > 0 ? Math.min(...repTimesSec) : null;
   const slowestTempo = repTimesSec.length > 0 ? Math.max(...repTimesSec) : null;
   
-  // Tempo consistency (standard deviation)
   const tempoStdDev = (() => {
     if (repTimesSec.length < 2) return null;
     const mean = repTimesSec.reduce((a, b) => a + b, 0) / repTimesSec.length;
@@ -29,9 +52,73 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
     return Math.sqrt(avgSquareDiff);
   })();
 
-  // Format helpers
+  // Handle export result
+  useEffect(() => {
+    if (exportResult && !exportLoading) {
+      if (exportResult.ok) {
+        const downloadUrl = buildExportUrl(exportResult.downloadUrlTemplate);
+        if (downloadUrl) {
+          downloadAndShare(downloadUrl, exportResult.filename);
+        } else {
+          setShareError('Could not build download URL. Check connection.');
+        }
+      } else {
+        setShareError(exportResult.error || 'Export failed. Session not found.');
+      }
+      clearExportResult();
+    }
+  }, [exportResult, exportLoading]);
+
+  const downloadAndShare = async (url, filename) => {
+    try {
+      setDownloadProgress('Downloading...');
+      setShareError(null);
+
+      const localUri = FileSystem.cacheDirectory + filename;
+      const downloadResult = await FileSystem.downloadAsync(url, localUri);
+      
+      if (downloadResult.status !== 200) {
+        throw new Error(`Download failed: ${downloadResult.status}`);
+      }
+
+      setDownloadProgress('Opening share...');
+
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(localUri, {
+          mimeType: 'application/zip',
+          dialogTitle: 'Share Session Data',
+          UTI: 'public.zip-archive'
+        });
+        setDownloadProgress(null);
+      } else {
+        Alert.alert('Export Complete', `File saved: ${filename}`);
+        setDownloadProgress(null);
+      }
+    } catch (error) {
+      console.error('Download error:', error);
+      setDownloadProgress(null);
+      setShareError('Download failed. Check Wi-Fi connection.');
+    }
+  };
+
+  const handleExport = () => {
+    if (!sessionId) {
+      Alert.alert('Export Error', 'No session ID available. Complete a workout first.');
+      return;
+    }
+
+    if (!piIpAddress) {
+      Alert.alert('Export Error', 'Not connected to device. Please reconnect.');
+      return;
+    }
+
+    setShareError(null);
+    requestExportSession(sessionId, 8000);
+  };
+
   const formatValue = (value, decimals = 2, suffix = '') => {
-    if (value == null || value === undefined) return '—';
+    if (value == null) return '—';
     return `${Number(value).toFixed(decimals)}${suffix}`;
   };
 
@@ -42,12 +129,11 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Fatigue interpretation
   const getFatigueInfo = (lossPct) => {
-    if (lossPct == null) return { level: 'Unknown', color: '#888', message: 'Not enough data' };
-    if (lossPct < 10) return { level: 'Strong Endurance', color: '#4CAF50', message: 'Excellent output consistency' };
-    if (lossPct <= 20) return { level: 'Normal Fatigue', color: '#FFC107', message: 'Typical fatigue pattern' };
-    return { level: 'High Fatigue', color: '#ff4444', message: 'Consider reducing volume next set' };
+    if (lossPct == null) return { level: 'Unknown', color: '#666' };
+    if (lossPct < 10) return { level: 'Low', color: '#4CAF50' };
+    if (lossPct <= 20) return { level: 'Moderate', color: '#FFC107' };
+    return { level: 'High', color: '#ff4444' };
   };
   const fatigueInfo = getFatigueInfo(outputLossPct);
 
@@ -56,7 +142,7 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
     if (!peakGyroPerRep || peakGyroPerRep.length === 0) {
       return (
         <View style={styles.noDataContainer}>
-          <Text style={styles.noDataText}>No peak output data</Text>
+          <Text style={styles.noDataText}>No data available</Text>
         </View>
       );
     }
@@ -77,7 +163,7 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
 
     return (
       <Svg width={chartWidth} height={chartHeight}>
-        <Line x1={leftPadding} y1={chartHeight - bottomPadding} x2={chartWidth - 10} y2={chartHeight - bottomPadding} stroke="#333" strokeWidth="1" />
+        <Line x1={leftPadding} y1={chartHeight - bottomPadding} x2={chartWidth - 10} y2={chartHeight - bottomPadding} stroke="#222" strokeWidth="1" />
         
         {peakGyroPerRep.map((value, index) => {
           const barHeight = Math.max(4, ((value - minValue) / range) * plotHeight);
@@ -92,8 +178,8 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
 
           return (
             <React.Fragment key={index}>
-              <Rect x={x} y={y} width={barWidth} height={barHeight} fill={color} rx={3} />
-              <SvgText x={x + barWidth/2} y={chartHeight - 5} fontSize="9" fill="#888" textAnchor="middle">
+              <Rect x={x} y={y} width={barWidth} height={barHeight} fill={color} rx={2} />
+              <SvgText x={x + barWidth/2} y={chartHeight - 5} fontSize="9" fill="#555" textAnchor="middle">
                 {index + 1}
               </SvgText>
             </React.Fragment>
@@ -107,21 +193,15 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
       
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onBackToDashboard}>
-          <Text style={styles.backButton}>←</Text>
+          <Text style={styles.backButton}>‹</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Session Summary</Text>
         <View style={{ width: 40 }} />
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Source indicator */}
-        <View style={styles.sourceIndicator}>
-          <Text style={styles.sourceText}>📡 From Device</Text>
-        </View>
-
         {/* Main Stats */}
         <View style={styles.mainStatsCard}>
           <View style={styles.statRow}>
@@ -142,37 +222,66 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
           </View>
         </View>
 
-        {/* ====================================== */}
-        {/* REP BREAKDOWN SECTION (HIGH PRIORITY) */}
-        {/* ====================================== */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📊 Rep Breakdown</Text>
-          
-          {/* Tempo Stats Summary */}
-          <View style={styles.tempoStatsCard}>
-            <View style={styles.tempoStatItem}>
-              <Text style={styles.tempoStatLabel}>Fastest</Text>
-              <Text style={[styles.tempoStatValue, { color: '#4CAF50' }]}>
-                {formatValue(fastestTempo, 2, 's')}
+        {/* Export Button */}
+        <TouchableOpacity 
+          style={[
+            styles.exportButton,
+            (exportLoading || downloadProgress) && styles.exportButtonDisabled
+          ]}
+          onPress={handleExport}
+          disabled={exportLoading || !!downloadProgress || !sessionId}
+        >
+          {exportLoading || downloadProgress ? (
+            <View style={styles.exportButtonContent}>
+              <ActivityIndicator size="small" color="#fff" />
+              <Text style={styles.exportButtonText}>
+                {downloadProgress || 'Preparing...'}
               </Text>
             </View>
-            <View style={styles.tempoStatDivider} />
-            <View style={styles.tempoStatItem}>
-              <Text style={styles.tempoStatLabel}>Slowest</Text>
-              <Text style={[styles.tempoStatValue, { color: '#FFC107' }]}>
-                {formatValue(slowestTempo, 2, 's')}
-              </Text>
-            </View>
-            <View style={styles.tempoStatDivider} />
-            <View style={styles.tempoStatItem}>
-              <Text style={styles.tempoStatLabel}>Consistency</Text>
-              <Text style={styles.tempoStatValue}>
-                ±{formatValue(tempoStdDev, 2, 's')}
-              </Text>
-            </View>
-          </View>
+          ) : (
+            <Text style={styles.exportButtonText}>Export Session</Text>
+          )}
+        </TouchableOpacity>
 
-          {/* Rep-by-Rep List */}
+        {!sessionId && (
+          <Text style={styles.exportNote}>Export available after session data is received</Text>
+        )}
+
+        {shareError && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>{shareError}</Text>
+          </View>
+        )}
+
+        {/* Rep Breakdown */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Rep Breakdown</Text>
+          
+          {repTimesSec.length > 0 && (
+            <View style={styles.tempoStatsCard}>
+              <View style={styles.tempoStatItem}>
+                <Text style={styles.tempoStatLabel}>Fastest</Text>
+                <Text style={[styles.tempoStatValue, { color: '#4CAF50' }]}>
+                  {formatValue(fastestTempo, 2, 's')}
+                </Text>
+              </View>
+              <View style={styles.tempoStatDivider} />
+              <View style={styles.tempoStatItem}>
+                <Text style={styles.tempoStatLabel}>Slowest</Text>
+                <Text style={[styles.tempoStatValue, { color: '#FFC107' }]}>
+                  {formatValue(slowestTempo, 2, 's')}
+                </Text>
+              </View>
+              <View style={styles.tempoStatDivider} />
+              <View style={styles.tempoStatItem}>
+                <Text style={styles.tempoStatLabel}>Std Dev</Text>
+                <Text style={styles.tempoStatValue}>
+                  {formatValue(tempoStdDev, 2, 's')}
+                </Text>
+              </View>
+            </View>
+          )}
+
           {repTimesSec.length > 0 ? (
             <View style={styles.repListCard}>
               {repTimesSec.map((tempo, index) => {
@@ -189,34 +298,23 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
                       ]}>
                         {tempo.toFixed(2)}s
                       </Text>
-                      {isFastest && <Text style={styles.repBadge}>⚡ Fastest</Text>}
-                      {isSlowest && <Text style={styles.repBadgeSlow}>🐢 Slowest</Text>}
+                      {isFastest && <View style={[styles.repIndicator, { backgroundColor: '#4CAF50' }]} />}
+                      {isSlowest && <View style={[styles.repIndicator, { backgroundColor: '#FFC107' }]} />}
                     </View>
                   </View>
                 );
               })}
             </View>
-          ) : repBreakdown.length > 0 ? (
-            <View style={styles.repListCard}>
-              {repBreakdown.map((rep, index) => (
-                <View key={index} style={styles.repListRow}>
-                  <Text style={styles.repListRep}>Rep {rep.rep || index + 1}</Text>
-                  <Text style={styles.repListTempo}>
-                    {formatValue(rep.tempo_sec, 2, 's')}
-                  </Text>
-                </View>
-              ))}
-            </View>
           ) : (
             <View style={styles.noDataContainer}>
-              <Text style={styles.noDataText}>No rep breakdown available</Text>
+              <Text style={styles.noDataText}>No rep data available</Text>
             </View>
           )}
         </View>
 
-        {/* Output / Fatigue Section */}
+        {/* Output / Fatigue */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>⚡ Output / Fatigue (Gyro Proxy)</Text>
+          <Text style={styles.sectionTitle}>Output Analysis</Text>
           
           <View style={[styles.outputLossCard, { borderLeftColor: fatigueInfo.color }]}>
             <View style={styles.outputLossHeader}>
@@ -235,78 +333,21 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
                   }
                 ]} />
               </View>
-              <View style={styles.fatigueMarkers}>
-                <Text style={styles.fatigueMarker}>0%</Text>
-                <Text style={styles.fatigueMarker}>10%</Text>
-                <Text style={styles.fatigueMarker}>20%</Text>
-                <Text style={styles.fatigueMarker}>30%</Text>
-              </View>
             </View>
             <Text style={[styles.fatigueLevelText, { color: fatigueInfo.color }]}>
-              {fatigueInfo.level}
+              {fatigueInfo.level} Fatigue
             </Text>
-            <Text style={styles.fatigueMessage}>{fatigueInfo.message}</Text>
           </View>
 
-          {/* Peak Gyro Chart */}
           {peakGyroPerRep.length > 0 && (
             <View style={styles.chartCard}>
               <Text style={styles.chartTitle}>Peak Output Per Rep</Text>
               {renderPeakGyroChart()}
-              <Text style={styles.chartNote}>Higher = more explosive</Text>
             </View>
           )}
         </View>
 
-        {/* AI Coaching */}
-        <View style={styles.coachingCard}>
-          <Text style={styles.coachingTitle}>🤖 AI Coaching</Text>
-          
-          {outputLossPct != null && outputLossPct > 20 && (
-            <View style={styles.coachingPoint}>
-              <Text style={styles.coachingBullet}>•</Text>
-              <Text style={styles.coachingText}>
-                High fatigue detected ({outputLossPct.toFixed(0)}% drop). Stop sets at 20% loss for strength gains.
-              </Text>
-            </View>
-          )}
-          
-          {outputLossPct != null && outputLossPct < 10 && (
-            <View style={styles.coachingPoint}>
-              <Text style={styles.coachingBullet}>•</Text>
-              <Text style={styles.coachingText}>
-                Strong endurance! You could add more reps or weight next set.
-              </Text>
-            </View>
-          )}
-          
-          {tempoStdDev != null && tempoStdDev < 0.3 && (
-            <View style={styles.coachingPoint}>
-              <Text style={styles.coachingBullet}>•</Text>
-              <Text style={styles.coachingText}>
-                Excellent tempo consistency (±{tempoStdDev.toFixed(2)}s). Great control!
-              </Text>
-            </View>
-          )}
-          
-          {tempoStdDev != null && tempoStdDev > 0.5 && (
-            <View style={styles.coachingPoint}>
-              <Text style={styles.coachingBullet}>•</Text>
-              <Text style={styles.coachingText}>
-                Tempo varied (±{tempoStdDev.toFixed(2)}s). Try to maintain consistent speed.
-              </Text>
-            </View>
-          )}
-          
-          <View style={styles.coachingPoint}>
-            <Text style={styles.coachingBullet}>•</Text>
-            <Text style={styles.coachingText}>
-              {totalReps} reps completed with {formatValue(tutSec, 1)}s time under tension.
-            </Text>
-          </View>
-        </View>
-
-        {/* Session ID */}
+        {/* Session Info */}
         {sessionId && (
           <View style={styles.sessionIdCard}>
             <Text style={styles.sessionIdLabel}>Session ID</Text>
@@ -314,7 +355,7 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
           </View>
         )}
 
-        {/* Action Buttons */}
+        {/* Actions */}
         <TouchableOpacity style={styles.historyButton} onPress={onViewHistory}>
           <Text style={styles.historyButtonText}>View History</Text>
         </TouchableOpacity>
@@ -339,38 +380,28 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingTop: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
+    borderBottomColor: '#1a1a1a',
   },
   backButton: {
-    fontSize: 28,
+    fontSize: 32,
     color: '#fff',
+    fontWeight: '300',
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 18,
+    fontWeight: '600',
     color: '#fff',
   },
   scrollContent: {
     padding: 20,
   },
-  sourceIndicator: {
-    alignSelf: 'center',
-    backgroundColor: '#1a2a1a',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    marginBottom: 16,
-  },
-  sourceText: {
-    fontSize: 11,
-    color: '#4CAF50',
-    fontWeight: '600',
-  },
   mainStatsCard: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 20,
-    padding: 20,
-    marginBottom: 24,
+    backgroundColor: '#111',
+    borderRadius: 16,
+    padding: 24,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   statRow: {
     flexDirection: 'row',
@@ -382,60 +413,104 @@ const styles = StyleSheet.create({
   },
   mainStatValue: {
     fontSize: 28,
-    fontWeight: 'bold',
-    color: '#4CAF50',
+    fontWeight: '700',
+    color: '#fff',
   },
   mainStatLabel: {
     fontSize: 10,
-    color: '#888',
+    color: '#666',
     letterSpacing: 1,
     marginTop: 4,
   },
   divider: {
     width: 1,
     height: 40,
-    backgroundColor: '#333',
+    backgroundColor: '#222',
+  },
+  exportButton: {
+    backgroundColor: '#2563eb',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 8,
+    alignItems: 'center',
+  },
+  exportButtonDisabled: {
+    backgroundColor: '#1e3a5f',
+  },
+  exportButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  exportButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  exportNote: {
+    fontSize: 12,
+    color: '#555',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  errorBanner: {
+    backgroundColor: 'rgba(255, 68, 68, 0.1)',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 68, 68, 0.3)',
+  },
+  errorBannerText: {
+    color: '#ff6666',
+    fontSize: 13,
+    textAlign: 'center',
   },
   section: {
     marginBottom: 24,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#888',
     marginBottom: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  // Tempo Stats
   tempoStatsCard: {
     flexDirection: 'row',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   tempoStatItem: {
     flex: 1,
     alignItems: 'center',
   },
   tempoStatLabel: {
-    fontSize: 11,
-    color: '#888',
+    fontSize: 10,
+    color: '#666',
     marginBottom: 4,
+    textTransform: 'uppercase',
   },
   tempoStatValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '600',
     color: '#fff',
   },
   tempoStatDivider: {
     width: 1,
-    backgroundColor: '#333',
+    backgroundColor: '#222',
   },
-  // Rep List
   repListCard: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 16,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   repListRow: {
     flexDirection: 'row',
@@ -443,7 +518,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
+    borderBottomColor: '#1a1a1a',
   },
   repListRep: {
     fontSize: 14,
@@ -454,8 +529,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   repListTempo: {
-    fontSize: 16,
-    fontWeight: 'bold',
+    fontSize: 15,
+    fontWeight: '600',
     color: '#fff',
   },
   fastestTempo: {
@@ -464,23 +539,20 @@ const styles = StyleSheet.create({
   slowestTempo: {
     color: '#FFC107',
   },
-  repBadge: {
-    fontSize: 10,
-    color: '#4CAF50',
+  repIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     marginLeft: 8,
   },
-  repBadgeSlow: {
-    fontSize: 10,
-    color: '#FFC107',
-    marginLeft: 8,
-  },
-  // Output Loss
   outputLossCard: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 20,
-    borderLeftWidth: 4,
+    borderLeftWidth: 3,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   outputLossHeader: {
     flexDirection: 'row',
@@ -489,143 +561,100 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   outputLossLabel: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#888',
   },
   outputLossValue: {
-    fontSize: 28,
-    fontWeight: 'bold',
+    fontSize: 24,
+    fontWeight: '700',
   },
   fatigueBarContainer: {
     marginBottom: 12,
   },
   fatigueBarBg: {
-    height: 10,
-    backgroundColor: '#222',
-    borderRadius: 5,
+    height: 6,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 3,
     overflow: 'hidden',
   },
   fatigueBarFill: {
     height: '100%',
-    borderRadius: 5,
-  },
-  fatigueMarkers: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 4,
-  },
-  fatigueMarker: {
-    fontSize: 9,
-    color: '#555',
+    borderRadius: 3,
   },
   fatigueLevelText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 6,
-  },
-  fatigueMessage: {
-    fontSize: 12,
-    color: '#888',
+    fontSize: 13,
+    fontWeight: '600',
     textAlign: 'center',
   },
-  // Chart
   chartCard: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   chartTitle: {
-    fontSize: 13,
-    color: '#888',
+    fontSize: 12,
+    color: '#666',
     marginBottom: 12,
   },
-  chartNote: {
-    fontSize: 11,
-    color: '#555',
-    marginTop: 8,
-  },
   noDataContainer: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 24,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   noDataText: {
-    color: '#666',
+    color: '#555',
     fontSize: 13,
   },
-  // Coaching
-  coachingCard: {
-    backgroundColor: '#1a3a1a',
-    borderRadius: 12,
-    padding: 20,
-    borderLeftWidth: 4,
-    borderLeftColor: '#4CAF50',
-    marginBottom: 24,
-  },
-  coachingTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 12,
-  },
-  coachingPoint: {
-    flexDirection: 'row',
-    marginBottom: 10,
-  },
-  coachingBullet: {
-    color: '#4CAF50',
-    fontSize: 14,
-    marginRight: 8,
-  },
-  coachingText: {
-    fontSize: 13,
-    color: '#aaa',
-    flex: 1,
-    lineHeight: 18,
-  },
-  // Session ID
   sessionIdCard: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   sessionIdLabel: {
-    fontSize: 11,
-    color: '#666',
+    fontSize: 10,
+    color: '#555',
     marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   sessionIdValue: {
-    fontSize: 12,
-    color: '#888',
+    fontSize: 11,
+    color: '#666',
     fontFamily: 'monospace',
   },
-  // Buttons
   historyButton: {
-    backgroundColor: '#2196F3',
+    backgroundColor: '#1a1a1a',
     borderRadius: 12,
-    padding: 18,
+    padding: 16,
     alignItems: 'center',
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#222',
   },
   historyButtonText: {
     color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
+    fontSize: 15,
+    fontWeight: '600',
   },
   backButton2: {
-    backgroundColor: '#333',
+    backgroundColor: 'transparent',
     borderRadius: 12,
-    padding: 18,
+    padding: 16,
     alignItems: 'center',
   },
   backButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
+    color: '#666',
+    fontSize: 15,
+    fontWeight: '500',
   },
 });

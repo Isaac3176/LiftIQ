@@ -8,6 +8,9 @@ export function WebSocketProvider({ children }) {
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [lastMessage, setLastMessage] = useState(null);
   
+  // Store Pi IP address for export URL building
+  const [piIpAddress, setPiIpAddress] = useState(null);
+  
   // =============================================
   // Live workout data (from rep_update)
   // =============================================
@@ -37,6 +40,12 @@ export function WebSocketProvider({ children }) {
   
   const [selectedSessionRawPoints, setSelectedSessionRawPoints] = useState(null);
   const [selectedSessionRawLoading, setSelectedSessionRawLoading] = useState(false);
+  
+  // =============================================
+  // Export state
+  // =============================================
+  const [exportResult, setExportResult] = useState(null);
+  const [exportLoading, setExportLoading] = useState(false);
   
   // Track last requested session for reconnect
   const lastRequestedSessionId = useRef(null);
@@ -154,6 +163,23 @@ export function WebSocketProvider({ children }) {
       }
 
       // =============================================
+      // export_result - Response to export_session
+      // =============================================
+      if (data.type === 'export_result') {
+        console.log('📦 Export Result:', data.ok, data.filename);
+        setExportResult({
+          ok: data.ok,
+          filename: data.filename,
+          zipPath: data.zip_path,
+          downloadUrlTemplate: data.download_url_template,
+          error: data.error,
+          receivedAt: Date.now()
+        });
+        setExportLoading(false);
+        return;
+      }
+
+      // =============================================
       // ACK messages
       // =============================================
       if (data.type === 'ack') {
@@ -176,10 +202,15 @@ export function WebSocketProvider({ children }) {
   // =============================================
   // Connection Management
   // =============================================
-  const connect = useCallback((ws) => {
+  const connect = useCallback((ws, ipAddress) => {
     if (wsRef.current) {
       console.log('WebSocket already exists');
       return;
+    }
+
+    // Store Pi IP address for export URL building
+    if (ipAddress) {
+      setPiIpAddress(ipAddress);
     }
 
     wsRef.current = ws;
@@ -215,6 +246,11 @@ export function WebSocketProvider({ children }) {
       setLiveAvgTempoSec(null);
       setLiveOutputLossPct(null);
     }
+  }, []);
+
+  // Allow setting Pi IP separately (e.g., from ConnectScreen)
+  const setPiIp = useCallback((ip) => {
+    setPiIpAddress(ip);
   }, []);
 
   const sendMessage = useCallback((message) => {
@@ -293,7 +329,38 @@ export function WebSocketProvider({ children }) {
   }, []);
 
   // =============================================
-  // Reconnect Handler - Re-request last session
+  // Export Command
+  // =============================================
+  const requestExportSession = useCallback((sessionId, httpPort = 8000) => {
+    setExportLoading(true);
+    setExportResult(null);
+    const sent = sendMessage({ 
+      type: 'cmd', 
+      action: 'export_session', 
+      session_id: sessionId,
+      start_http: true,
+      http_port: httpPort
+    });
+    if (!sent) {
+      setExportLoading(false);
+      setExportResult({ ok: false, error: 'Not connected' });
+    }
+    return sent;
+  }, [sendMessage]);
+
+  const clearExportResult = useCallback(() => {
+    setExportResult(null);
+    setExportLoading(false);
+  }, []);
+
+  // Build download URL with actual Pi IP
+  const buildExportUrl = useCallback((urlTemplate) => {
+    if (!urlTemplate || !piIpAddress) return null;
+    return urlTemplate.replace('<PI_IP>', piIpAddress);
+  }, [piIpAddress]);
+
+  // =============================================
+  // Reconnect Handler
   // =============================================
   useEffect(() => {
     if (connectionStatus === 'connected' && lastRequestedSessionId.current) {
@@ -308,6 +375,7 @@ export function WebSocketProvider({ children }) {
     websocket,
     connectionStatus,
     lastMessage,
+    piIpAddress,
     
     // Live workout data (authoritative from server)
     repCount,
@@ -333,9 +401,14 @@ export function WebSocketProvider({ children }) {
     selectedSessionRawPoints,
     selectedSessionRawLoading,
     
+    // Export
+    exportResult,
+    exportLoading,
+    
     // Methods
     connect,
     disconnect,
+    setPiIp,
     sendMessage,
     startRecording,
     stopRecording,
@@ -343,6 +416,9 @@ export function WebSocketProvider({ children }) {
     requestSessionDetail,
     requestSessionRaw,
     clearSelectedSession,
+    requestExportSession,
+    clearExportResult,
+    buildExportUrl,
   };
 
   return (

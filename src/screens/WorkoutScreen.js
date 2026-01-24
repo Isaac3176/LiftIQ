@@ -7,7 +7,6 @@ import LiveChart from '../components/LiveChart';
 export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
   const { 
     connectionStatus, 
-    // Authoritative from server (via rep_update)
     repCount,
     currentState,
     isRecording,
@@ -15,11 +14,9 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
     liveTutSec,
     liveAvgTempoSec,
     liveOutputLossPct,
-    // Rep events (for animation)
     repEvents,
     lastRepEvent,
     currentSessionSummary,
-    // Methods
     startRecording,
     stopRecording,
     disconnect 
@@ -33,22 +30,16 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
   const feedbackAnim = useRef(new Animated.Value(0)).current;
   const lastAnimatedRep = useRef(0);
 
-  // Animate ONLY on rep_event (not on repCount change)
+  // Animate ONLY on rep_event
   useEffect(() => {
     if (!lastRepEvent || !isRecording) return;
-    
-    // Prevent duplicate animations for same rep
     if (lastRepEvent.rep <= lastAnimatedRep.current) return;
     lastAnimatedRep.current = lastRepEvent.rep;
 
-    console.log('🎉 Animating rep:', lastRepEvent.rep);
-
-    // Haptic feedback
     try {
       Vibration.vibrate(50);
     } catch (e) {}
 
-    // Pulse animation
     Animated.sequence([
       Animated.timing(pulseAnim, {
         toValue: 1.3,
@@ -62,7 +53,6 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
       }),
     ]).start();
 
-    // Feedback overlay
     setShowRepFeedback(true);
     Animated.sequence([
       Animated.timing(feedbackAnim, {
@@ -80,7 +70,6 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
 
   }, [lastRepEvent, isRecording]);
 
-  // Track session start for local timer display
   useEffect(() => {
     if (isRecording && !sessionStartTime) {
       setSessionStartTime(Date.now());
@@ -90,7 +79,6 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
     }
   }, [isRecording]);
 
-  // Update chart data
   useEffect(() => {
     if (gyroFilt !== undefined) {
       setChartData(prev => {
@@ -111,10 +99,8 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
     // Wait for session_summary then navigate
     setTimeout(() => {
       onEndWorkout({
-        // Pass server summary as source of truth
         serverSummary: currentSessionSummary,
         repEvents: repEvents,
-        // Fallback values if summary not received
         reps: repCount,
         duration: sessionStartTime ? Math.floor((Date.now() - sessionStartTime) / 1000) : 0,
       });
@@ -128,13 +114,11 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
 
   const isConnected = connectionStatus === 'connected';
 
-  // Format helpers
   const formatValue = (value, decimals = 1, suffix = '') => {
     if (value == null || value === undefined) return '—';
     return `${Number(value).toFixed(decimals)}${suffix}`;
   };
 
-  // State color helper
   const getStateStyle = () => {
     switch (currentState) {
       case 'MOVING': return styles.stateMoving;
@@ -143,15 +127,14 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
     }
   };
 
-  const getStateIcon = () => {
+  const getStateLabel = () => {
     switch (currentState) {
-      case 'MOVING': return '🏋️';
-      case 'CALIBRATING': return '🔄';
-      default: return '⏸️';
+      case 'MOVING': return 'Active';
+      case 'CALIBRATING': return 'Calibrating';
+      default: return 'Ready';
     }
   };
 
-  // Output loss color
   const getOutputLossStyle = () => {
     if (liveOutputLossPct == null) return {};
     if (liveOutputLossPct > 20) return { color: '#ff4444' };
@@ -163,10 +146,9 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
       
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backButtonContainer}>
-          <Text style={styles.backButtonText}>←</Text>
+          <Text style={styles.backButtonText}>‹</Text>
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Live Workout</Text>
@@ -181,12 +163,11 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
           </View>
         </View>
         <TouchableOpacity onPress={handleDisconnect} style={styles.menuButton}>
-          <Text style={styles.menuButtonText}>⋮</Text>
+          <Text style={styles.menuButtonText}>•••</Text>
         </TouchableOpacity>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Rep Feedback Overlay */}
         {showRepFeedback && lastRepEvent && (
           <Animated.View style={[
             styles.repFeedback,
@@ -200,19 +181,15 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
               }]
             }
           ]}>
-            <Text style={styles.repFeedbackText}>+1 REP</Text>
+            <Text style={styles.repFeedbackText}>+1</Text>
             {lastRepEvent.peakGyro != null && (
               <Text style={styles.repFeedbackPeakGyro}>
-                ⚡ {lastRepEvent.peakGyro.toFixed(0)}
+                {lastRepEvent.peakGyro.toFixed(0)}
               </Text>
             )}
-            <Text style={styles.repFeedbackConfidence}>
-              {(lastRepEvent.confidence * 100).toFixed(0)}% confidence
-            </Text>
           </Animated.View>
         )}
 
-        {/* Large Rep Counter */}
         <View style={[styles.repCounterWrapper, !isRecording && styles.repCounterPaused]}>
           <RepCounter count={repCount} pulseAnim={pulseAnim} />
           {!isRecording && repCount === 0 && (
@@ -220,7 +197,6 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
           )}
         </View>
 
-        {/* Recording Indicator */}
         {isRecording && (
           <View style={styles.recordingBadge}>
             <View style={styles.recordingDot} />
@@ -228,26 +204,22 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
           </View>
         )}
 
-        {/* Motion State Card */}
         <View style={styles.stateCard}>
-          <Text style={styles.stateLabel}>Motion Status</Text>
+          <Text style={styles.stateLabel}>Status</Text>
           <Text style={[styles.stateValue, getStateStyle()]}>
-            {getStateIcon()} {currentState}
+            {getStateLabel()}
           </Text>
         </View>
 
-        {/* Live Metrics Grid */}
         <View style={styles.metricsGrid}>
           <View style={styles.metricCard}>
             <Text style={styles.metricLabel}>TUT</Text>
             <Text style={styles.metricValue}>{formatValue(liveTutSec, 1, 's')}</Text>
-            <Text style={styles.metricSource}>From Device</Text>
           </View>
           
           <View style={styles.metricCard}>
             <Text style={styles.metricLabel}>Avg Tempo</Text>
             <Text style={styles.metricValue}>{formatValue(liveAvgTempoSec, 2, 's')}</Text>
-            <Text style={styles.metricSource}>From Device</Text>
           </View>
           
           <View style={styles.metricCard}>
@@ -255,11 +227,9 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
             <Text style={[styles.metricValue, getOutputLossStyle()]}>
               {formatValue(liveOutputLossPct, 1, '%')}
             </Text>
-            <Text style={styles.metricSource}>Fatigue Proxy</Text>
           </View>
         </View>
 
-        {/* Live Chart */}
         <View style={styles.chartContainer}>
           <Text style={styles.chartTitle}>Gyro Signal</Text>
           <LiveChart data={chartData} />
@@ -268,7 +238,6 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
           </Text>
         </View>
 
-        {/* Rep Events Debug */}
         {repEvents.length > 0 && (
           <View style={styles.repEventsCard}>
             <Text style={styles.repEventsTitle}>Rep Events ({repEvents.length})</Text>
@@ -282,16 +251,13 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
           </View>
         )}
 
-        {/* Not Connected Warning */}
         {!isConnected && (
           <View style={styles.notConnectedCard}>
-            <Text style={styles.notConnectedIcon}>📡</Text>
             <Text style={styles.notConnectedText}>Connection lost</Text>
           </View>
         )}
       </ScrollView>
 
-      {/* Footer with Start/Stop Button */}
       <View style={styles.footer}>
         {!isRecording ? (
           <TouchableOpacity 
@@ -303,7 +269,7 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
           </TouchableOpacity>
         ) : (
           <TouchableOpacity style={styles.stopButton} onPress={handleStopWorkout}>
-            <Text style={styles.stopButtonText}>Stop & View Summary</Text>
+            <Text style={styles.stopButtonText}>Stop Workout</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -321,19 +287,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
+    borderBottomColor: '#1a1a1a',
   },
   backButtonContainer: {
     padding: 8,
     marginRight: 8,
   },
   backButtonText: {
-    fontSize: 24,
+    fontSize: 28,
     color: '#fff',
+    fontWeight: '300',
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 18,
+    fontWeight: '600',
     color: '#fff',
   },
   statusContainer: {
@@ -342,9 +309,9 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     marginRight: 6,
   },
   statusConnected: {
@@ -355,14 +322,15 @@ const styles = StyleSheet.create({
   },
   statusText: {
     fontSize: 12,
-    color: '#888',
+    color: '#666',
   },
   menuButton: {
     padding: 8,
   },
   menuButtonText: {
-    fontSize: 24,
-    color: '#888',
+    fontSize: 16,
+    color: '#666',
+    letterSpacing: 2,
   },
   scrollContent: {
     padding: 20,
@@ -372,48 +340,34 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: '25%',
     left: '50%',
-    transform: [{ translateX: -90 }],
-    width: 180,
+    transform: [{ translateX: -60 }],
+    width: 120,
     backgroundColor: '#4CAF50',
-    borderRadius: 20,
-    padding: 20,
+    borderRadius: 16,
+    padding: 16,
     alignItems: 'center',
     zIndex: 1000,
     elevation: 10,
-    shadowColor: '#4CAF50',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
   },
   repFeedbackText: {
-    fontSize: 28,
-    fontWeight: 'bold',
+    fontSize: 32,
+    fontWeight: '700',
     color: '#fff',
-    marginBottom: 8,
   },
   repFeedbackPeakGyro: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 8,
-    marginBottom: 4,
-  },
-  repFeedbackConfidence: {
-    fontSize: 12,
-    color: '#ddd',
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: 4,
   },
   repCounterWrapper: {
     marginBottom: 20,
   },
   repCounterPaused: {
-    opacity: 0.6,
+    opacity: 0.5,
   },
   pausedText: {
     textAlign: 'center',
-    color: '#888',
+    color: '#666',
     fontSize: 14,
     marginTop: 8,
   },
@@ -421,50 +375,56 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#3a1a1a',
+    backgroundColor: 'rgba(255, 68, 68, 0.1)',
     paddingVertical: 10,
     paddingHorizontal: 20,
     borderRadius: 20,
     marginBottom: 20,
     alignSelf: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 68, 68, 0.3)',
   },
   recordingDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: '#ff4444',
     marginRight: 8,
   },
   recordingText: {
     color: '#ff4444',
-    fontSize: 13,
-    fontWeight: 'bold',
+    fontSize: 12,
+    fontWeight: '600',
     letterSpacing: 1,
   },
   stateCard: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   stateLabel: {
-    fontSize: 12,
-    color: '#888',
-    marginBottom: 8,
+    fontSize: 11,
+    color: '#666',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
   stateValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 18,
+    fontWeight: '600',
   },
   stateWaiting: {
-    color: '#888',
+    color: '#666',
   },
   stateMoving: {
     color: '#4CAF50',
   },
   stateCalibrating: {
-    color: '#666',
+    color: '#888',
   },
   metricsGrid: {
     flexDirection: 'row',
@@ -473,72 +433,73 @@ const styles = StyleSheet.create({
   },
   metricCard: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 14,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   metricLabel: {
-    fontSize: 11,
-    color: '#888',
+    fontSize: 10,
+    color: '#666',
     marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   metricValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '600',
     color: '#fff',
   },
-  metricSource: {
-    fontSize: 9,
-    color: '#555',
-    marginTop: 4,
-  },
   chartContainer: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   chartTitle: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#888',
     marginBottom: 12,
   },
   chartNote: {
     fontSize: 11,
-    color: '#888',
+    color: '#555',
     marginTop: 8,
     textAlign: 'center',
   },
   repEventsCard: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   repEventsTitle: {
-    fontSize: 13,
-    fontWeight: 'bold',
-    color: '#888',
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
     marginBottom: 8,
   },
   repEventsList: {},
   repEventItem: {
-    fontSize: 12,
-    color: '#666',
+    fontSize: 11,
+    color: '#555',
     fontFamily: 'monospace',
     marginBottom: 4,
   },
   notConnectedCard: {
-    backgroundColor: '#3a1a1a',
+    backgroundColor: 'rgba(255, 68, 68, 0.1)',
     borderRadius: 12,
-    padding: 24,
+    padding: 20,
     alignItems: 'center',
-  },
-  notConnectedIcon: {
-    fontSize: 40,
-    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 68, 68, 0.3)',
   },
   notConnectedText: {
     fontSize: 14,
@@ -547,7 +508,7 @@ const styles = StyleSheet.create({
   footer: {
     padding: 20,
     borderTopWidth: 1,
-    borderTopColor: '#222',
+    borderTopColor: '#1a1a1a',
   },
   startButton: {
     backgroundColor: '#4CAF50',
@@ -560,8 +521,8 @@ const styles = StyleSheet.create({
   },
   startButtonText: {
     color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '600',
   },
   stopButton: {
     backgroundColor: '#ff4444',
@@ -571,7 +532,7 @@ const styles = StyleSheet.create({
   },
   stopButtonText: {
     color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

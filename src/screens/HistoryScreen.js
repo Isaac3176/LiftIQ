@@ -12,7 +12,7 @@ import {
   Modal,
   Dimensions
 } from 'react-native';
-import Svg, { Rect, Line, Polyline, Circle, Text as SvgText, G } from 'react-native-svg';
+import Svg, { Rect, Line, Polyline, Text as SvgText } from 'react-native-svg';
 import { useWebSocket } from '../context/WebSocketContext';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -38,18 +38,12 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
 
   const isConnected = connectionStatus === 'connected';
 
-  // =============================================
-  // Request sessions on mount
-  // =============================================
   useEffect(() => {
     if (isConnected) {
       requestSessions(30);
     }
   }, [isConnected, requestSessions]);
 
-  // =============================================
-  // Pull-to-refresh
-  // =============================================
   const onRefresh = useCallback(() => {
     if (isConnected) {
       setRefreshing(true);
@@ -63,22 +57,14 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
     }
   }, [sessionsList, refreshing]);
 
-  // =============================================
-  // Handle session detail received
-  // =============================================
   useEffect(() => {
     if (selectedSessionSummary && selectedSessionId) {
-      // Also request raw data for playback chart
       requestSessionRaw(selectedSessionId, 2000, 5);
     }
   }, [selectedSessionSummary, selectedSessionId, requestSessionRaw]);
 
-  // Use server sessions or fallback to local
   const sessions = sessionsList?.sessions || history || [];
 
-  // =============================================
-  // Format helpers
-  // =============================================
   const formatDate = (timestamp) => {
     if (!timestamp) return 'Unknown';
     const date = new Date(timestamp);
@@ -112,9 +98,6 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
     return `${Number(value).toFixed(decimals)}${suffix}`;
   };
 
-  // =============================================
-  // Session tap handler
-  // =============================================
   const handleSessionTap = (session) => {
     const sessionId = session.session_id || session.id;
     if (sessionId && isConnected) {
@@ -130,9 +113,6 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
     clearSelectedSession();
   };
 
-  // =============================================
-  // Compute tempo stats from rep_times_sec
-  // =============================================
   const computeTempoStats = (repTimesSec) => {
     if (!repTimesSec || repTimesSec.length === 0) {
       return { fastest: null, slowest: null, stdDev: null };
@@ -152,9 +132,6 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
     return { fastest, slowest, stdDev };
   };
 
-  // =============================================
-  // Render Playback Chart (gyro_filt vs t)
-  // =============================================
   const renderPlaybackChart = () => {
     const points = selectedSessionRawPoints?.points || [];
     
@@ -162,7 +139,7 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
       return (
         <View style={styles.chartLoading}>
           <ActivityIndicator size="small" color="#4CAF50" />
-          <Text style={styles.chartLoadingText}>Loading playback data...</Text>
+          <Text style={styles.chartLoadingText}>Loading data...</Text>
         </View>
       );
     }
@@ -170,28 +147,27 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
     if (!points || points.length === 0) {
       return (
         <View style={styles.noChartData}>
-          <Text style={styles.noChartDataText}>No playback data available</Text>
+          <Text style={styles.noChartDataText}>No playback data</Text>
         </View>
       );
     }
 
     const chartWidth = SCREEN_WIDTH - 80;
-    const chartHeight = 150;
-    const leftPadding = 45;
+    const chartHeight = 120;
+    const leftPadding = 40;
     const rightPadding = 10;
     const topPadding = 10;
     const bottomPadding = 25;
     const plotWidth = chartWidth - leftPadding - rightPadding;
     const plotHeight = chartHeight - topPadding - bottomPadding;
 
-    // Get data bounds
     const gyroValues = points.map(p => p.gyro_filt).filter(v => v != null);
     const timeValues = points.map(p => p.t).filter(v => v != null);
     
     if (gyroValues.length === 0 || timeValues.length === 0) {
       return (
         <View style={styles.noChartData}>
-          <Text style={styles.noChartDataText}>Invalid playback data</Text>
+          <Text style={styles.noChartDataText}>Invalid data</Text>
         </View>
       );
     }
@@ -204,7 +180,6 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
     const maxTime = Math.max(...timeValues);
     const timeRange = (maxTime - minTime) || 1;
 
-    // Build polyline points
     const polylinePoints = points
       .filter(p => p.gyro_filt != null && p.t != null)
       .map(p => {
@@ -214,74 +189,25 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
       })
       .join(' ');
 
-    // Find state change points for coloring
-    const stateSegments = [];
-    let currentState = points[0]?.state;
-    let segmentStart = 0;
-    
-    for (let i = 1; i < points.length; i++) {
-      if (points[i].state !== currentState) {
-        stateSegments.push({
-          state: currentState,
-          startIdx: segmentStart,
-          endIdx: i - 1
-        });
-        currentState = points[i].state;
-        segmentStart = i;
-      }
-    }
-    stateSegments.push({
-      state: currentState,
-      startIdx: segmentStart,
-      endIdx: points.length - 1
-    });
-
     return (
       <Svg width={chartWidth} height={chartHeight}>
-        {/* Background grid */}
-        <Line x1={leftPadding} y1={topPadding} x2={leftPadding} y2={chartHeight - bottomPadding} stroke="#333" strokeWidth="1" />
-        <Line x1={leftPadding} y1={chartHeight - bottomPadding} x2={chartWidth - rightPadding} y2={chartHeight - bottomPadding} stroke="#333" strokeWidth="1" />
+        <Line x1={leftPadding} y1={topPadding} x2={leftPadding} y2={chartHeight - bottomPadding} stroke="#222" strokeWidth="1" />
+        <Line x1={leftPadding} y1={chartHeight - bottomPadding} x2={chartWidth - rightPadding} y2={chartHeight - bottomPadding} stroke="#222" strokeWidth="1" />
         
-        {/* Y-axis labels */}
-        <SvgText x={leftPadding - 5} y={topPadding + 4} fontSize="9" fill="#666" textAnchor="end">
+        <SvgText x={leftPadding - 5} y={topPadding + 4} fontSize="9" fill="#555" textAnchor="end">
           {maxGyro.toFixed(0)}
         </SvgText>
-        <SvgText x={leftPadding - 5} y={chartHeight - bottomPadding} fontSize="9" fill="#666" textAnchor="end">
+        <SvgText x={leftPadding - 5} y={chartHeight - bottomPadding} fontSize="9" fill="#555" textAnchor="end">
           {minGyro.toFixed(0)}
         </SvgText>
         
-        {/* X-axis labels */}
-        <SvgText x={leftPadding} y={chartHeight - 8} fontSize="9" fill="#666" textAnchor="start">
+        <SvgText x={leftPadding} y={chartHeight - 8} fontSize="9" fill="#555" textAnchor="start">
           {minTime.toFixed(1)}s
         </SvgText>
-        <SvgText x={chartWidth - rightPadding} y={chartHeight - 8} fontSize="9" fill="#666" textAnchor="end">
+        <SvgText x={chartWidth - rightPadding} y={chartHeight - 8} fontSize="9" fill="#555" textAnchor="end">
           {maxTime.toFixed(1)}s
         </SvgText>
 
-        {/* State background regions */}
-        {stateSegments.map((seg, idx) => {
-          if (seg.startIdx >= points.length || seg.endIdx >= points.length) return null;
-          const startPoint = points[seg.startIdx];
-          const endPoint = points[seg.endIdx];
-          if (!startPoint || !endPoint) return null;
-          
-          const x1 = leftPadding + ((startPoint.t - minTime) / timeRange) * plotWidth;
-          const x2 = leftPadding + ((endPoint.t - minTime) / timeRange) * plotWidth;
-          const fillColor = seg.state === 'MOVING' ? 'rgba(76, 175, 80, 0.1)' : 'rgba(255, 255, 255, 0.02)';
-          
-          return (
-            <Rect
-              key={idx}
-              x={x1}
-              y={topPadding}
-              width={Math.max(1, x2 - x1)}
-              height={plotHeight}
-              fill={fillColor}
-            />
-          );
-        })}
-
-        {/* Main line */}
         <Polyline
           points={polylinePoints}
           fill="none"
@@ -292,13 +218,9 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
     );
   };
 
-  // =============================================
-  // Render Session Detail Modal
-  // =============================================
   const renderDetailModal = () => {
     const summary = selectedSessionSummary?.summary || {};
     const repTimesSec = summary.rep_times_sec || [];
-    const repBreakdown = summary.rep_breakdown || [];
     const tempoStats = computeTempoStats(repTimesSec);
 
     return (
@@ -311,7 +233,7 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
         <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <TouchableOpacity onPress={closeDetailModal}>
-              <Text style={styles.modalBackButton}>← Back</Text>
+              <Text style={styles.modalBackButton}>‹ Back</Text>
             </TouchableOpacity>
             <Text style={styles.modalTitle}>Session Details</Text>
             <View style={{ width: 60 }} />
@@ -320,7 +242,7 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
           {selectedSessionLoading ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color="#4CAF50" />
-              <Text style={styles.loadingText}>Loading session...</Text>
+              <Text style={styles.loadingText}>Loading...</Text>
             </View>
           ) : selectedSessionSummary?.error ? (
             <View style={styles.errorContainer}>
@@ -328,12 +250,6 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
             </View>
           ) : (
             <ScrollView contentContainerStyle={styles.modalContent}>
-              {/* Source indicator */}
-              <View style={styles.sourceIndicator}>
-                <Text style={styles.sourceText}>📡 From Device</Text>
-              </View>
-
-              {/* Main Stats */}
               <View style={styles.detailStatsCard}>
                 <View style={styles.detailStatRow}>
                   <View style={styles.detailStat}>
@@ -353,7 +269,6 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
                 </View>
               </View>
 
-              {/* Metrics Grid */}
               <View style={styles.metricsGrid}>
                 <View style={styles.metricBox}>
                   <Text style={styles.metricBoxLabel}>Avg Tempo</Text>
@@ -371,28 +286,16 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
                 </View>
               </View>
 
-              {/* Playback Chart */}
               <View style={styles.detailSection}>
-                <Text style={styles.detailSectionTitle}>📈 Session Playback</Text>
+                <Text style={styles.detailSectionTitle}>Session Playback</Text>
                 <View style={styles.playbackChartCard}>
                   {renderPlaybackChart()}
-                  <View style={styles.chartLegend}>
-                    <View style={styles.legendItem}>
-                      <View style={[styles.legendDot, { backgroundColor: 'rgba(76, 175, 80, 0.3)' }]} />
-                      <Text style={styles.legendText}>Moving</Text>
-                    </View>
-                    <View style={styles.legendItem}>
-                      <View style={[styles.legendDot, { backgroundColor: 'rgba(255, 255, 255, 0.1)' }]} />
-                      <Text style={styles.legendText}>Waiting</Text>
-                    </View>
-                  </View>
                 </View>
               </View>
 
-              {/* Tempo Stats */}
               {repTimesSec.length > 0 && (
                 <View style={styles.detailSection}>
-                  <Text style={styles.detailSectionTitle}>⏱️ Tempo Analysis</Text>
+                  <Text style={styles.detailSectionTitle}>Tempo Analysis</Text>
                   <View style={styles.tempoStatsCard}>
                     <View style={styles.tempoStatItem}>
                       <Text style={styles.tempoStatLabel}>Fastest</Text>
@@ -409,19 +312,18 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
                     </View>
                     <View style={styles.tempoStatDivider} />
                     <View style={styles.tempoStatItem}>
-                      <Text style={styles.tempoStatLabel}>Consistency</Text>
+                      <Text style={styles.tempoStatLabel}>Std Dev</Text>
                       <Text style={styles.tempoStatValue}>
-                        ±{formatValue(tempoStats.stdDev, 2, 's')}
+                        {formatValue(tempoStats.stdDev, 2, 's')}
                       </Text>
                     </View>
                   </View>
                 </View>
               )}
 
-              {/* Rep Breakdown */}
-              <View style={styles.detailSection}>
-                <Text style={styles.detailSectionTitle}>📊 Rep Breakdown</Text>
-                {repTimesSec.length > 0 ? (
+              {repTimesSec.length > 0 && (
+                <View style={styles.detailSection}>
+                  <Text style={styles.detailSectionTitle}>Rep Breakdown</Text>
                   <View style={styles.repBreakdownContainer}>
                     {repTimesSec.map((tempo, index) => {
                       const isFastest = tempo === tempoStats.fastest;
@@ -437,34 +339,18 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
                             ]}>
                               {tempo.toFixed(2)}s
                             </Text>
-                            {isFastest && <Text style={styles.repBadge}>⚡</Text>}
-                            {isSlowest && <Text style={styles.repBadgeSlow}>🐢</Text>}
+                            {isFastest && <View style={[styles.repIndicator, { backgroundColor: '#4CAF50' }]} />}
+                            {isSlowest && <View style={[styles.repIndicator, { backgroundColor: '#FFC107' }]} />}
                           </View>
                         </View>
                       );
                     })}
                   </View>
-                ) : repBreakdown.length > 0 ? (
-                  <View style={styles.repBreakdownContainer}>
-                    {repBreakdown.map((rep, index) => (
-                      <View key={index} style={styles.repBreakdownRow}>
-                        <Text style={styles.repBreakdownRep}>Rep {rep.rep || index + 1}</Text>
-                        <Text style={styles.repBreakdownValue}>
-                          {formatValue(rep.tempo_sec, 2, 's')}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                ) : (
-                  <View style={styles.noDataContainer}>
-                    <Text style={styles.noDataText}>No rep breakdown available</Text>
-                  </View>
-                )}
-              </View>
+                </View>
+              )}
 
-              {/* Session Info */}
               <View style={styles.detailSection}>
-                <Text style={styles.detailSectionTitle}>ℹ️ Session Info</Text>
+                <Text style={styles.detailSectionTitle}>Session Info</Text>
                 <View style={styles.infoCard}>
                   <View style={styles.infoRow}>
                     <Text style={styles.infoLabel}>Session ID</Text>
@@ -473,21 +359,15 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
                     </Text>
                   </View>
                   <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Start Time</Text>
+                    <Text style={styles.infoLabel}>Start</Text>
                     <Text style={styles.infoValue}>
                       {summary.start_time ? new Date(summary.start_time).toLocaleString() : '—'}
                     </Text>
                   </View>
                   <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>End Time</Text>
+                    <Text style={styles.infoLabel}>End</Text>
                     <Text style={styles.infoValue}>
                       {summary.end_time ? new Date(summary.end_time).toLocaleString() : '—'}
-                    </Text>
-                  </View>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Raw Points</Text>
-                    <Text style={styles.infoValue}>
-                      {selectedSessionRawPoints?.count || '—'}
                     </Text>
                   </View>
                 </View>
@@ -499,19 +379,15 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
     );
   };
 
-  // =============================================
-  // Main Render
-  // =============================================
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
       
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack}>
-          <Text style={styles.backButton}>←</Text>
+          <Text style={styles.backButton}>‹</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Workout History</Text>
+        <Text style={styles.headerTitle}>History</Text>
         <View style={{ width: 40 }} />
       </View>
 
@@ -526,14 +402,12 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
           />
         }
       >
-        {/* Offline Banner */}
         {!isConnected && (
           <View style={styles.offlineBanner}>
-            <Text style={styles.offlineBannerText}>📡 Offline - Connect to load sessions</Text>
+            <Text style={styles.offlineBannerText}>Offline - Connect to load sessions</Text>
           </View>
         )}
 
-        {/* Summary Stats */}
         {sessions.length > 0 && (
           <View style={styles.summaryCard}>
             <View style={styles.summaryItem}>
@@ -547,32 +421,19 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
               </Text>
               <Text style={styles.summaryLabel}>Avg Reps</Text>
             </View>
-            <View style={styles.summaryDivider} />
-            <View style={styles.summaryItem}>
-              <Text style={styles.summaryValue}>
-                {formatValue(
-                  sessions.filter(s => s.avg_tempo_sec).reduce((sum, s) => sum + s.avg_tempo_sec, 0) / 
-                  sessions.filter(s => s.avg_tempo_sec).length || 0,
-                  2
-                )}s
-              </Text>
-              <Text style={styles.summaryLabel}>Avg Tempo</Text>
-            </View>
           </View>
         )}
 
-        {/* Loading */}
         {sessionsLoading && sessions.length === 0 && (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#4CAF50" />
-            <Text style={styles.loadingText}>Loading sessions...</Text>
+            <Text style={styles.loadingText}>Loading...</Text>
           </View>
         )}
 
-        {/* Sessions List */}
         {sessions.length > 0 && (
           <>
-            <Text style={styles.listTitle}>Recent Workouts</Text>
+            <Text style={styles.listTitle}>Recent Sessions</Text>
             
             {sessions.map((session, index) => {
               const sessionId = session.session_id || session.id || index;
@@ -587,10 +448,10 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
                   <View style={styles.sessionHeader}>
                     <View>
                       <Text style={styles.sessionDate}>
-                        {formatDate(timestamp)} {formatTime(timestamp) && `• ${formatTime(timestamp)}`}
+                        {formatDate(timestamp)} {formatTime(timestamp) && `· ${formatTime(timestamp)}`}
                       </Text>
                       <Text style={styles.sessionDuration}>
-                        Duration: {formatDuration(session.duration_sec)}
+                        {formatDuration(session.duration_sec)}
                       </Text>
                     </View>
                     {session.output_loss_pct != null && (
@@ -622,23 +483,17 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
                       <Text style={styles.statLabel}>TEMPO</Text>
                     </View>
                   </View>
-
-                  <View style={styles.sessionFooter}>
-                    <Text style={styles.viewDetails}>View Details →</Text>
-                  </View>
                 </TouchableOpacity>
               );
             })}
           </>
         )}
 
-        {/* Empty State */}
         {!sessionsLoading && sessions.length === 0 && (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyIcon}>🏋️</Text>
             <Text style={styles.emptyText}>No sessions yet</Text>
             <Text style={styles.emptySubtext}>
-              {isConnected ? 'Complete a workout to see history' : 'Connect to server to load sessions'}
+              {isConnected ? 'Complete a workout to see history' : 'Connect to load sessions'}
             </Text>
             {isConnected && (
               <TouchableOpacity style={styles.refreshButton} onPress={onRefresh}>
@@ -649,7 +504,6 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
         )}
       </ScrollView>
 
-      {/* Detail Modal */}
       {renderDetailModal()}
     </SafeAreaView>
   );
@@ -667,62 +521,69 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingTop: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
+    borderBottomColor: '#1a1a1a',
   },
   backButton: {
-    fontSize: 28,
+    fontSize: 32,
     color: '#fff',
+    fontWeight: '300',
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 18,
+    fontWeight: '600',
     color: '#fff',
   },
   scrollContent: {
     padding: 20,
   },
   offlineBanner: {
-    backgroundColor: '#3a2a1a',
+    backgroundColor: 'rgba(255, 193, 7, 0.1)',
     padding: 12,
     borderRadius: 8,
     marginBottom: 16,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 193, 7, 0.3)',
   },
   offlineBannerText: {
     color: '#FFC107',
     fontSize: 13,
   },
   summaryCard: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 16,
+    backgroundColor: '#111',
+    borderRadius: 12,
     padding: 20,
     flexDirection: 'row',
     marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   summaryItem: {
     flex: 1,
     alignItems: 'center',
   },
   summaryValue: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#4CAF50',
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#fff',
   },
   summaryLabel: {
     fontSize: 10,
-    color: '#888',
+    color: '#666',
     marginTop: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   summaryDivider: {
     width: 1,
-    backgroundColor: '#333',
+    backgroundColor: '#222',
   },
   loadingContainer: {
     padding: 60,
     alignItems: 'center',
   },
   loadingText: {
-    color: '#888',
+    color: '#666',
     marginTop: 16,
     fontSize: 14,
   },
@@ -735,16 +596,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   listTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
     marginBottom: 16,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   sessionCard: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   sessionHeader: {
     flexDirection: 'row',
@@ -759,82 +624,68 @@ const styles = StyleSheet.create({
   },
   sessionDuration: {
     fontSize: 12,
-    color: '#888',
+    color: '#555',
     marginTop: 2,
   },
   outputBadge: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 10,
+    borderRadius: 6,
   },
   badgeSuccess: {
-    backgroundColor: '#1a3a1a',
+    backgroundColor: 'rgba(76, 175, 80, 0.15)',
   },
   badgeWarning: {
-    backgroundColor: '#3a3a1a',
+    backgroundColor: 'rgba(255, 193, 7, 0.15)',
   },
   badgeDanger: {
-    backgroundColor: '#3a1a1a',
+    backgroundColor: 'rgba(255, 68, 68, 0.15)',
   },
   outputBadgeText: {
     fontSize: 11,
-    fontWeight: 'bold',
+    fontWeight: '600',
     color: '#fff',
   },
   sessionStats: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingTop: 12,
     borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: '#222',
+    borderColor: '#1a1a1a',
   },
   sessionStat: {
     flex: 1,
     alignItems: 'center',
   },
   statValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '600',
     color: '#fff',
   },
   statLabel: {
     fontSize: 9,
-    color: '#888',
+    color: '#555',
     marginTop: 4,
-    letterSpacing: 1,
+    letterSpacing: 0.5,
   },
   sessionStatDivider: {
     width: 1,
-    height: 30,
-    backgroundColor: '#333',
-  },
-  sessionFooter: {
-    marginTop: 12,
-    alignItems: 'flex-end',
-  },
-  viewDetails: {
-    fontSize: 13,
-    color: '#4CAF50',
-    fontWeight: '600',
+    height: 24,
+    backgroundColor: '#1a1a1a',
   },
   emptyState: {
     alignItems: 'center',
     paddingVertical: 60,
   },
-  emptyIcon: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
   emptyText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#888',
     marginBottom: 8,
   },
   emptySubtext: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: 13,
+    color: '#555',
     textAlign: 'center',
     marginBottom: 24,
   },
@@ -846,7 +697,7 @@ const styles = StyleSheet.create({
   },
   refreshButtonText: {
     color: '#fff',
-    fontWeight: 'bold',
+    fontWeight: '600',
   },
   // Modal styles
   modalContainer: {
@@ -859,39 +710,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
+    borderBottomColor: '#1a1a1a',
   },
   modalBackButton: {
     fontSize: 16,
     color: '#4CAF50',
-    fontWeight: '600',
+    fontWeight: '500',
   },
   modalTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: '600',
     color: '#fff',
   },
   modalContent: {
     padding: 20,
   },
-  sourceIndicator: {
-    alignSelf: 'center',
-    backgroundColor: '#1a2a1a',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    marginBottom: 16,
-  },
-  sourceText: {
-    fontSize: 11,
-    color: '#4CAF50',
-    fontWeight: '600',
-  },
   detailStatsCard: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 16,
+    backgroundColor: '#111',
+    borderRadius: 12,
     padding: 20,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   detailStatRow: {
     flexDirection: 'row',
@@ -902,20 +742,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   detailStatValue: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#4CAF50',
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#fff',
   },
   detailStatLabel: {
-    fontSize: 10,
-    color: '#888',
-    letterSpacing: 1,
+    fontSize: 9,
+    color: '#666',
+    letterSpacing: 0.5,
     marginTop: 4,
   },
   detailDivider: {
     width: 1,
-    height: 40,
-    backgroundColor: '#333',
+    height: 36,
+    backgroundColor: '#222',
   },
   metricsGrid: {
     flexDirection: 'row',
@@ -924,19 +764,22 @@ const styles = StyleSheet.create({
   },
   metricBox: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   metricBoxLabel: {
-    fontSize: 11,
-    color: '#888',
+    fontSize: 10,
+    color: '#666',
     marginBottom: 4,
+    textTransform: 'uppercase',
   },
   metricBoxValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '600',
     color: '#fff',
   },
   successText: {
@@ -952,22 +795,26 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   detailSectionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
     marginBottom: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   playbackChartCard: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 16,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   chartLoading: {
     padding: 40,
     alignItems: 'center',
   },
   chartLoadingText: {
-    color: '#888',
+    color: '#666',
     fontSize: 12,
     marginTop: 8,
   },
@@ -976,57 +823,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   noChartDataText: {
-    color: '#666',
+    color: '#555',
     fontSize: 13,
-  },
-  chartLegend: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: 12,
-    gap: 20,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  legendDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 2,
-    marginRight: 6,
-  },
-  legendText: {
-    fontSize: 11,
-    color: '#888',
   },
   tempoStatsCard: {
     flexDirection: 'row',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 16,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   tempoStatItem: {
     flex: 1,
     alignItems: 'center',
   },
   tempoStatLabel: {
-    fontSize: 11,
-    color: '#888',
+    fontSize: 10,
+    color: '#666',
     marginBottom: 4,
+    textTransform: 'uppercase',
   },
   tempoStatValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '600',
     color: '#fff',
   },
   tempoStatDivider: {
     width: 1,
-    backgroundColor: '#333',
+    backgroundColor: '#222',
   },
   repBreakdownContainer: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 16,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   repBreakdownRow: {
     flexDirection: 'row',
@@ -1034,7 +866,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
+    borderBottomColor: '#1a1a1a',
   },
   repBreakdownRep: {
     fontSize: 14,
@@ -1045,8 +877,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   repBreakdownValue: {
-    fontSize: 16,
-    fontWeight: 'bold',
+    fontSize: 15,
+    fontWeight: '600',
     color: '#fff',
   },
   fastestText: {
@@ -1055,43 +887,33 @@ const styles = StyleSheet.create({
   slowestText: {
     color: '#FFC107',
   },
-  repBadge: {
-    fontSize: 12,
+  repIndicator: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     marginLeft: 8,
-  },
-  repBadgeSlow: {
-    fontSize: 12,
-    marginLeft: 8,
-  },
-  noDataContainer: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
-    padding: 24,
-    alignItems: 'center',
-  },
-  noDataText: {
-    color: '#666',
-    fontSize: 13,
   },
   infoCard: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 16,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
+    borderBottomColor: '#1a1a1a',
   },
   infoLabel: {
     fontSize: 13,
-    color: '#888',
+    color: '#666',
   },
   infoValue: {
     fontSize: 13,
-    color: '#fff',
+    color: '#888',
     maxWidth: '55%',
     textAlign: 'right',
   },

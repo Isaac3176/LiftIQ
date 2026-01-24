@@ -19,7 +19,7 @@ import { useWebSocket } from '../context/WebSocketContext';
 import ConnectionStatus from '../components/ConnectionStatus';
 
 export default function ConnectScreen({ onConnected }) {
-  const { connect, connectionStatus } = useWebSocket();
+  const { connect, connectionStatus, setPiIp } = useWebSocket();
   const [ipAddress, setIpAddress] = useState('192.168.1.100');
   const [port, setPort] = useState('8765');
   const [error, setError] = useState('');
@@ -41,7 +41,10 @@ export default function ConnectScreen({ onConnected }) {
       port,
       (ws) => {
         setIsConnecting(false);
-        connect(ws); // Store in context
+        // Store Pi IP address for export URL building
+        setPiIp(ipAddress.trim());
+        // Connect and pass IP to context
+        connect(ws, ipAddress.trim());
         setTimeout(() => onConnected(), 500);
       },
       (errorMsg) => {
@@ -64,7 +67,7 @@ export default function ConnectScreen({ onConnected }) {
             keyboardShouldPersistTaps="handled"
           >
             <View style={styles.header}>
-              <Text style={styles.title}>Smart Weightlifting</Text>
+              <Text style={styles.title}>LiftIQ</Text>
               <Text style={styles.subtitle}>Connect to Raspberry Pi</Text>
             </View>
 
@@ -155,9 +158,9 @@ const styles = StyleSheet.create({
     marginBottom: 40,
   },
   title: {
-    fontSize: 32,
+    fontSize: 36,
     fontWeight: 'bold',
-    color: '#fff',
+    color: '#4CAF50',
     marginBottom: 8,
   },
   subtitle: {
