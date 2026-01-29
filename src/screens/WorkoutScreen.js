@@ -14,6 +14,8 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
     liveTutSec,
     liveAvgTempoSec,
     liveOutputLossPct,
+    liveAvgPeakSpeedProxy,
+    liveSpeedLossPct,
     repEvents,
     lastRepEvent,
     currentSessionSummary,
@@ -96,7 +98,6 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
   const handleStopWorkout = () => {
     stopRecording();
     
-    // Wait for session_summary then navigate
     setTimeout(() => {
       onEndWorkout({
         serverSummary: currentSessionSummary,
@@ -135,10 +136,10 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
     }
   };
 
-  const getOutputLossStyle = () => {
-    if (liveOutputLossPct == null) return {};
-    if (liveOutputLossPct > 20) return { color: '#ff4444' };
-    if (liveOutputLossPct > 10) return { color: '#FFC107' };
+  const getLossStyle = (value) => {
+    if (value == null) return {};
+    if (value > 20) return { color: '#ff4444' };
+    if (value > 10) return { color: '#FFC107' };
     return { color: '#4CAF50' };
   };
 
@@ -168,6 +169,7 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
+        {/* Rep Feedback Popup */}
         {showRepFeedback && lastRepEvent && (
           <Animated.View style={[
             styles.repFeedback,
@@ -182,14 +184,20 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
             }
           ]}>
             <Text style={styles.repFeedbackText}>+1</Text>
-            {lastRepEvent.peakGyro != null && (
-              <Text style={styles.repFeedbackPeakGyro}>
-                {lastRepEvent.peakGyro.toFixed(0)}
+            {lastRepEvent.peakSpeedProxy != null && (
+              <Text style={styles.repFeedbackDetail}>
+                {lastRepEvent.peakSpeedProxy.toFixed(0)} peak
+              </Text>
+            )}
+            {lastRepEvent.tempoSec != null && (
+              <Text style={styles.repFeedbackTempo}>
+                {lastRepEvent.tempoSec.toFixed(2)}s
               </Text>
             )}
           </Animated.View>
         )}
 
+        {/* Rep Counter */}
         <View style={[styles.repCounterWrapper, !isRecording && styles.repCounterPaused]}>
           <RepCounter count={repCount} pulseAnim={pulseAnim} />
           {!isRecording && repCount === 0 && (
@@ -197,6 +205,7 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
           )}
         </View>
 
+        {/* Recording Badge */}
         {isRecording && (
           <View style={styles.recordingBadge}>
             <View style={styles.recordingDot} />
@@ -204,6 +213,7 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
           </View>
         )}
 
+        {/* State Card */}
         <View style={styles.stateCard}>
           <Text style={styles.stateLabel}>Status</Text>
           <Text style={[styles.stateValue, getStateStyle()]}>
@@ -211,6 +221,7 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
           </Text>
         </View>
 
+        {/* Primary Metrics */}
         <View style={styles.metricsGrid}>
           <View style={styles.metricCard}>
             <Text style={styles.metricLabel}>TUT</Text>
@@ -224,12 +235,64 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
           
           <View style={styles.metricCard}>
             <Text style={styles.metricLabel}>Output Loss</Text>
-            <Text style={[styles.metricValue, getOutputLossStyle()]}>
+            <Text style={[styles.metricValue, getLossStyle(liveOutputLossPct)]}>
               {formatValue(liveOutputLossPct, 1, '%')}
             </Text>
           </View>
         </View>
 
+        {/* Speed Proxy Metrics */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Speed (proxy)</Text>
+          <Text style={styles.sectionNote}>gyro-based estimate</Text>
+        </View>
+        
+        <View style={styles.metricsGrid}>
+          <View style={styles.metricCard}>
+            <Text style={styles.metricLabel}>Avg Peak Speed</Text>
+            <Text style={styles.metricValue}>{formatValue(liveAvgPeakSpeedProxy, 0)}</Text>
+            <Text style={styles.metricUnit}>deg/s</Text>
+          </View>
+          
+          <View style={styles.metricCard}>
+            <Text style={styles.metricLabel}>Speed Loss</Text>
+            <Text style={[styles.metricValue, getLossStyle(liveSpeedLossPct)]}>
+              {formatValue(liveSpeedLossPct, 1, '%')}
+            </Text>
+            <Text style={styles.metricUnit}>fatigue proxy</Text>
+          </View>
+        </View>
+
+        {/* Last Rep Info */}
+        {lastRepEvent && isRecording && (
+          <View style={styles.lastRepCard}>
+            <Text style={styles.lastRepTitle}>Last Rep (#{lastRepEvent.rep})</Text>
+            <View style={styles.lastRepStats}>
+              <View style={styles.lastRepStat}>
+                <Text style={styles.lastRepLabel}>Peak Speed</Text>
+                <Text style={styles.lastRepValue}>
+                  {formatValue(lastRepEvent.peakSpeedProxy, 0)}
+                </Text>
+              </View>
+              <View style={styles.lastRepDivider} />
+              <View style={styles.lastRepStat}>
+                <Text style={styles.lastRepLabel}>Tempo</Text>
+                <Text style={styles.lastRepValue}>
+                  {formatValue(lastRepEvent.tempoSec, 2, 's')}
+                </Text>
+              </View>
+              <View style={styles.lastRepDivider} />
+              <View style={styles.lastRepStat}>
+                <Text style={styles.lastRepLabel}>Avg Speed</Text>
+                <Text style={styles.lastRepValue}>
+                  {formatValue(lastRepEvent.avgSpeedProxy, 0)}
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* Gyro Chart */}
         <View style={styles.chartContainer}>
           <Text style={styles.chartTitle}>Gyro Signal</Text>
           <LiveChart data={chartData} />
@@ -238,19 +301,21 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
           </Text>
         </View>
 
+        {/* Rep Events Debug */}
         {repEvents.length > 0 && (
           <View style={styles.repEventsCard}>
             <Text style={styles.repEventsTitle}>Rep Events ({repEvents.length})</Text>
             <View style={styles.repEventsList}>
               {repEvents.slice(-5).map((event, i) => (
                 <Text key={i} style={styles.repEventItem}>
-                  Rep {event.rep}: t={event.t?.toFixed(2)}s, peak={event.peakGyro?.toFixed(0) || '—'}
+                  Rep {event.rep}: {event.tempoSec?.toFixed(2) || '—'}s, peak={event.peakSpeedProxy?.toFixed(0) || '—'}
                 </Text>
               ))}
             </View>
           </View>
         )}
 
+        {/* Disconnected Warning */}
         {!isConnected && (
           <View style={styles.notConnectedCard}>
             <Text style={styles.notConnectedText}>Connection lost</Text>
@@ -258,6 +323,7 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
         )}
       </ScrollView>
 
+      {/* Footer Buttons */}
       <View style={styles.footer}>
         {!isRecording ? (
           <TouchableOpacity 
@@ -338,10 +404,10 @@ const styles = StyleSheet.create({
   },
   repFeedback: {
     position: 'absolute',
-    top: '25%',
+    top: '20%',
     left: '50%',
-    transform: [{ translateX: -60 }],
-    width: 120,
+    transform: [{ translateX: -70 }],
+    width: 140,
     backgroundColor: '#4CAF50',
     borderRadius: 16,
     padding: 16,
@@ -354,10 +420,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
   },
-  repFeedbackPeakGyro: {
-    fontSize: 14,
+  repFeedbackDetail: {
+    fontSize: 13,
     color: 'rgba(255,255,255,0.8)',
     marginTop: 4,
+  },
+  repFeedbackTempo: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.6)',
+    marginTop: 2,
   },
   repCounterWrapper: {
     marginBottom: 20,
@@ -426,6 +497,24 @@ const styles = StyleSheet.create({
   stateCalibrating: {
     color: '#888',
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginBottom: 10,
+    marginTop: 8,
+  },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#888',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  sectionNote: {
+    fontSize: 10,
+    color: '#555',
+  },
   metricsGrid: {
     flexDirection: 'row',
     gap: 10,
@@ -451,6 +540,51 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#fff',
+  },
+  metricUnit: {
+    fontSize: 9,
+    color: '#555',
+    marginTop: 2,
+  },
+  lastRepCard: {
+    backgroundColor: '#111',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
+  },
+  lastRepTitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#666',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  lastRepStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  lastRepStat: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  lastRepLabel: {
+    fontSize: 9,
+    color: '#555',
+    marginBottom: 4,
+  },
+  lastRepValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#4CAF50',
+  },
+  lastRepDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: '#222',
   },
   chartContainer: {
     backgroundColor: '#111',

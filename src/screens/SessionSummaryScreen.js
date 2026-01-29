@@ -12,7 +12,8 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
     exportLoading, 
     requestExportSession, 
     clearExportResult,
-    buildExportUrl 
+    buildExportUrl,
+    repEvents
   } = useWebSocket();
 
   const [downloadProgress, setDownloadProgress] = useState(null);
@@ -20,6 +21,7 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
 
   // Get session data from server summary
   const serverSummary = sessionData?.serverSummary;
+  const sessionRepEvents = sessionData?.repEvents || repEvents || [];
   
   // Session ID - check multiple sources
   const sessionId = serverSummary?.sessionId || sessionData?.sessionId || null;
@@ -27,18 +29,12 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
   const tutSec = serverSummary?.tutSec ?? null;
   const avgTempoSec = serverSummary?.avgTempoSec ?? null;
   const repTimesSec = serverSummary?.repTimesSec || [];
-  const repBreakdown = serverSummary?.repBreakdown || [];
   const outputLossPct = serverSummary?.outputLossPct ?? null;
   const peakGyroPerRep = serverSummary?.peakGyroPerRep || [];
-
-  // Debug log
-  useEffect(() => {
-    console.log('SessionSummaryScreen data:', {
-      sessionId,
-      serverSummary,
-      sessionData
-    });
-  }, [sessionId, serverSummary, sessionData]);
+  
+  // Velocity proxy fields
+  const avgPeakSpeedProxy = serverSummary?.avgPeakSpeedProxy ?? null;
+  const speedLossPct = serverSummary?.speedLossPct ?? null;
 
   // Calculate tempo stats
   const fastestTempo = repTimesSec.length > 0 ? Math.min(...repTimesSec) : null;
@@ -122,33 +118,56 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
     return `${Number(value).toFixed(decimals)}${suffix}`;
   };
 
-  const formatDuration = (seconds) => {
-    if (seconds == null) return '—';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const getFatigueInfo = (lossPct) => {
+  const getLossInfo = (lossPct) => {
     if (lossPct == null) return { level: 'Unknown', color: '#666' };
     if (lossPct < 10) return { level: 'Low', color: '#4CAF50' };
     if (lossPct <= 20) return { level: 'Moderate', color: '#FFC107' };
     return { level: 'High', color: '#ff4444' };
   };
-  const fatigueInfo = getFatigueInfo(outputLossPct);
+  
+  const fatigueInfo = getLossInfo(outputLossPct);
+  const speedLossInfo = getLossInfo(speedLossPct);
 
-  // Render Peak Gyro Chart
-  const renderPeakGyroChart = () => {
-    if (!peakGyroPerRep || peakGyroPerRep.length === 0) {
+  // Build rep breakdown data from rep_events (has more detail)
+  const getRepBreakdownData = () => {
+    if (sessionRepEvents.length > 0) {
+      return sessionRepEvents.map((event, index) => ({
+        rep: event.rep || index + 1,
+        tempoSec: event.tempoSec,
+        peakSpeedProxy: event.peakSpeedProxy,
+        avgSpeedProxy: event.avgSpeedProxy,
+      }));
+    }
+    // Fallback to just tempo data
+    return repTimesSec.map((tempo, index) => ({
+      rep: index + 1,
+      tempoSec: tempo,
+      peakSpeedProxy: null,
+      avgSpeedProxy: null,
+    }));
+  };
+
+  const repBreakdownData = getRepBreakdownData();
+
+  // Find fastest/slowest for highlighting
+  const tempos = repBreakdownData.map(r => r.tempoSec).filter(t => t != null);
+  const minTempo = tempos.length > 0 ? Math.min(...tempos) : null;
+  const maxTempo = tempos.length > 0 ? Math.max(...tempos) : null;
+
+  // Render Peak Speed Chart
+  const renderSpeedChart = () => {
+    const speeds = repBreakdownData.map(r => r.peakSpeedProxy).filter(s => s != null);
+    
+    if (speeds.length === 0) {
       return (
         <View style={styles.noDataContainer}>
-          <Text style={styles.noDataText}>No data available</Text>
+          <Text style={styles.noDataText}>No speed data available</Text>
         </View>
       );
     }
 
-    const maxValue = Math.max(...peakGyroPerRep);
-    const minValue = Math.min(...peakGyroPerRep);
+    const maxValue = Math.max(...speeds);
+    const minValue = Math.min(...speeds);
     const range = (maxValue - minValue) || 1;
 
     const chartWidth = 300;
@@ -158,19 +177,19 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
     const plotWidth = chartWidth - leftPadding - 10;
     const plotHeight = chartHeight - bottomPadding - 10;
 
-    const barWidth = Math.max(14, Math.min(30, plotWidth / peakGyroPerRep.length - 4));
-    const spacing = (plotWidth - barWidth * peakGyroPerRep.length) / (peakGyroPerRep.length + 1);
+    const barWidth = Math.max(14, Math.min(30, plotWidth / speeds.length - 4));
+    const spacing = (plotWidth - barWidth * speeds.length) / (speeds.length + 1);
 
     return (
       <Svg width={chartWidth} height={chartHeight}>
         <Line x1={leftPadding} y1={chartHeight - bottomPadding} x2={chartWidth - 10} y2={chartHeight - bottomPadding} stroke="#222" strokeWidth="1" />
         
-        {peakGyroPerRep.map((value, index) => {
+        {speeds.map((value, index) => {
           const barHeight = Math.max(4, ((value - minValue) / range) * plotHeight);
           const x = leftPadding + spacing + index * (barWidth + spacing);
           const y = chartHeight - bottomPadding - barHeight;
           
-          const firstValue = peakGyroPerRep[0];
+          const firstValue = speeds[0];
           const decline = firstValue > 0 ? ((firstValue - value) / firstValue) * 100 : 0;
           let color = '#4CAF50';
           if (decline > 20) color = '#ff4444';
@@ -253,23 +272,52 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
           </View>
         )}
 
-        {/* Rep Breakdown */}
+        {/* Speed Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Rep Breakdown</Text>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Speed (proxy)</Text>
+            <Text style={styles.sectionNote}>gyro-based estimate</Text>
+          </View>
           
-          {repTimesSec.length > 0 && (
+          <View style={styles.metricsRow}>
+            <View style={styles.metricBox}>
+              <Text style={styles.metricBoxLabel}>Avg Peak Speed</Text>
+              <Text style={styles.metricBoxValue}>{formatValue(avgPeakSpeedProxy, 0)}</Text>
+              <Text style={styles.metricBoxUnit}>deg/s</Text>
+            </View>
+            <View style={styles.metricBox}>
+              <Text style={styles.metricBoxLabel}>Speed Loss</Text>
+              <Text style={[styles.metricBoxValue, { color: speedLossInfo.color }]}>
+                {formatValue(speedLossPct, 1, '%')}
+              </Text>
+              <Text style={styles.metricBoxUnit}>{speedLossInfo.level} fatigue</Text>
+            </View>
+          </View>
+
+          {/* Speed Chart */}
+          <View style={styles.chartCard}>
+            <Text style={styles.chartTitle}>Peak Speed Per Rep</Text>
+            {renderSpeedChart()}
+          </View>
+        </View>
+
+        {/* Tempo Stats */}
+        {repBreakdownData.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Tempo Analysis</Text>
+            
             <View style={styles.tempoStatsCard}>
               <View style={styles.tempoStatItem}>
                 <Text style={styles.tempoStatLabel}>Fastest</Text>
                 <Text style={[styles.tempoStatValue, { color: '#4CAF50' }]}>
-                  {formatValue(fastestTempo, 2, 's')}
+                  {formatValue(minTempo, 2, 's')}
                 </Text>
               </View>
               <View style={styles.tempoStatDivider} />
               <View style={styles.tempoStatItem}>
                 <Text style={styles.tempoStatLabel}>Slowest</Text>
                 <Text style={[styles.tempoStatValue, { color: '#FFC107' }]}>
-                  {formatValue(slowestTempo, 2, 's')}
+                  {formatValue(maxTempo, 2, 's')}
                 </Text>
               </View>
               <View style={styles.tempoStatDivider} />
@@ -280,27 +328,47 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
                 </Text>
               </View>
             </View>
-          )}
+          </View>
+        )}
 
-          {repTimesSec.length > 0 ? (
+        {/* Rep Breakdown */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Rep Breakdown</Text>
+          
+          {repBreakdownData.length > 0 ? (
             <View style={styles.repListCard}>
-              {repTimesSec.map((tempo, index) => {
-                const isFastest = tempo === fastestTempo;
-                const isSlowest = tempo === slowestTempo;
+              {/* Header Row */}
+              <View style={styles.repHeaderRow}>
+                <Text style={styles.repHeaderCell}>Rep</Text>
+                <Text style={styles.repHeaderCell}>Tempo</Text>
+                <Text style={styles.repHeaderCell}>Peak Spd</Text>
+                <Text style={styles.repHeaderCell}>Avg Spd</Text>
+              </View>
+              
+              {repBreakdownData.map((rep, index) => {
+                const isFastest = rep.tempoSec === minTempo && minTempo !== maxTempo;
+                const isSlowest = rep.tempoSec === maxTempo && minTempo !== maxTempo;
+                
                 return (
-                  <View key={index} style={styles.repListRow}>
-                    <Text style={styles.repListRep}>Rep {index + 1}</Text>
-                    <View style={styles.repListRight}>
+                  <View key={index} style={styles.repDataRow}>
+                    <Text style={styles.repNumCell}>{rep.rep}</Text>
+                    <View style={styles.repDataCell}>
                       <Text style={[
-                        styles.repListTempo,
-                        isFastest && styles.fastestTempo,
-                        isSlowest && styles.slowestTempo,
+                        styles.repDataValue,
+                        isFastest && styles.fastestText,
+                        isSlowest && styles.slowestText,
                       ]}>
-                        {tempo.toFixed(2)}s
+                        {formatValue(rep.tempoSec, 2, 's')}
                       </Text>
                       {isFastest && <View style={[styles.repIndicator, { backgroundColor: '#4CAF50' }]} />}
                       {isSlowest && <View style={[styles.repIndicator, { backgroundColor: '#FFC107' }]} />}
                     </View>
+                    <Text style={styles.repDataCellText}>
+                      {formatValue(rep.peakSpeedProxy, 0)}
+                    </Text>
+                    <Text style={styles.repDataCellText}>
+                      {formatValue(rep.avgSpeedProxy, 0)}
+                    </Text>
                   </View>
                 );
               })}
@@ -312,7 +380,7 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
           )}
         </View>
 
-        {/* Output / Fatigue */}
+        {/* Output Loss */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Output Analysis</Text>
           
@@ -338,13 +406,6 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
               {fatigueInfo.level} Fatigue
             </Text>
           </View>
-
-          {peakGyroPerRep.length > 0 && (
-            <View style={styles.chartCard}>
-              <Text style={styles.chartTitle}>Peak Output Per Rep</Text>
-              {renderPeakGyroChart()}
-            </View>
-          )}
         </View>
 
         {/* Session Info */}
@@ -469,20 +530,71 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 24,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginBottom: 12,
+  },
   sectionTitle: {
     fontSize: 14,
     fontWeight: '600',
     color: '#888',
-    marginBottom: 12,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+  sectionNote: {
+    fontSize: 10,
+    color: '#555',
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  metricBox: {
+    flex: 1,
+    backgroundColor: '#111',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
+  },
+  metricBoxLabel: {
+    fontSize: 10,
+    color: '#666',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
+  metricBoxValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  metricBoxUnit: {
+    fontSize: 10,
+    color: '#555',
+    marginTop: 2,
+  },
+  chartCard: {
+    backgroundColor: '#111',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
+  },
+  chartTitle: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 12,
   },
   tempoStatsCard: {
     flexDirection: 'row',
     backgroundColor: '#111',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 12,
     borderWidth: 1,
     borderColor: '#1a1a1a',
   },
@@ -512,45 +624,68 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1a1a1a',
   },
-  repListRow: {
+  repHeaderRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    paddingBottom: 10,
+    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#222',
+  },
+  repHeaderCell: {
+    flex: 1,
+    fontSize: 10,
+    color: '#555',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    textAlign: 'center',
+  },
+  repDataRow: {
+    flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#1a1a1a',
   },
-  repListRep: {
+  repNumCell: {
+    flex: 1,
     fontSize: 14,
     color: '#888',
+    textAlign: 'center',
   },
-  repListRight: {
+  repDataCell: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  repListTempo: {
-    fontSize: 15,
+  repDataValue: {
+    fontSize: 14,
     fontWeight: '600',
     color: '#fff',
   },
-  fastestTempo: {
+  repDataCellText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#888',
+    textAlign: 'center',
+  },
+  fastestText: {
     color: '#4CAF50',
   },
-  slowestTempo: {
+  slowestText: {
     color: '#FFC107',
   },
   repIndicator: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginLeft: 8,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginLeft: 6,
   },
   outputLossCard: {
     backgroundColor: '#111',
     borderRadius: 12,
     padding: 20,
     borderLeftWidth: 3,
-    marginBottom: 12,
     borderWidth: 1,
     borderColor: '#1a1a1a',
   },
@@ -585,19 +720,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     textAlign: 'center',
-  },
-  chartCard: {
-    backgroundColor: '#111',
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#1a1a1a',
-  },
-  chartTitle: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 12,
   },
   noDataContainer: {
     backgroundColor: '#111',

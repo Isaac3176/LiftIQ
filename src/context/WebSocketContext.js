@@ -22,6 +22,10 @@ export function WebSocketProvider({ children }) {
   const [liveAvgTempoSec, setLiveAvgTempoSec] = useState(null);
   const [liveOutputLossPct, setLiveOutputLossPct] = useState(null);
   
+  // Velocity proxy fields (from rep_update)
+  const [liveAvgPeakSpeedProxy, setLiveAvgPeakSpeedProxy] = useState(null);
+  const [liveSpeedLossPct, setLiveSpeedLossPct] = useState(null);
+  
   // Rep events (for animation)
   const [repEvents, setRepEvents] = useState([]);
   const [lastRepEvent, setLastRepEvent] = useState(null);
@@ -68,6 +72,10 @@ export function WebSocketProvider({ children }) {
         if (data.tut_sec !== undefined) setLiveTutSec(data.tut_sec);
         if (data.avg_tempo_sec !== undefined) setLiveAvgTempoSec(data.avg_tempo_sec);
         if (data.output_loss_pct !== undefined) setLiveOutputLossPct(data.output_loss_pct);
+        
+        // Velocity proxy fields
+        if (data.avg_peak_speed_proxy !== undefined) setLiveAvgPeakSpeedProxy(data.avg_peak_speed_proxy);
+        if (data.speed_loss_pct !== undefined) setLiveSpeedLossPct(data.speed_loss_pct);
         return;
       }
 
@@ -75,19 +83,24 @@ export function WebSocketProvider({ children }) {
       // rep_event - Once per detected rep
       // =============================================
       if (data.type === 'rep_event') {
-        console.log('🎯 Rep Event:', data.rep);
         setRepEvents(prev => [...prev, {
           rep: data.rep,
           t: data.t,
           confidence: data.confidence,
-          peakGyro: data.peak_gyro,
+          tempoSec: data.tempo_sec,
+          peakSpeedProxy: data.peak_speed_proxy,
+          avgSpeedProxy: data.avg_speed_proxy,
+          peakGyro: data.peak_gyro || data.peak_speed_proxy,
           receivedAt: Date.now()
         }]);
         setLastRepEvent({
           rep: data.rep,
           t: data.t,
           confidence: data.confidence,
-          peakGyro: data.peak_gyro
+          tempoSec: data.tempo_sec,
+          peakSpeedProxy: data.peak_speed_proxy,
+          avgSpeedProxy: data.avg_speed_proxy,
+          peakGyro: data.peak_gyro || data.peak_speed_proxy
         });
         return;
       }
@@ -96,7 +109,6 @@ export function WebSocketProvider({ children }) {
       // session_summary - After Stop Workout
       // =============================================
       if (data.type === 'session_summary') {
-        console.log('📊 Session Summary:', data.session_id);
         setCurrentSessionSummary({
           sessionId: data.session_id,
           totalReps: data.total_reps,
@@ -106,6 +118,8 @@ export function WebSocketProvider({ children }) {
           repBreakdown: data.rep_breakdown || [],
           outputLossPct: data.output_loss_pct ?? null,
           peakGyroPerRep: data.peak_gyro_per_rep || [],
+          avgPeakSpeedProxy: data.avg_peak_speed_proxy ?? null,
+          speedLossPct: data.speed_loss_pct ?? null,
           receivedAt: Date.now()
         });
         return;
@@ -115,7 +129,6 @@ export function WebSocketProvider({ children }) {
       // sessions_list - Response to list_sessions
       // =============================================
       if (data.type === 'sessions_list') {
-        console.log('📋 Sessions List:', data.count, 'sessions');
         setSessionsList({
           count: data.count || 0,
           sessions: data.sessions || [],
@@ -129,7 +142,6 @@ export function WebSocketProvider({ children }) {
       // session_detail - Response to get_session
       // =============================================
       if (data.type === 'session_detail') {
-        console.log('📄 Session Detail:', data.session_id, 'ok:', data.ok);
         if (data.ok) {
           setSelectedSessionSummary({
             sessionId: data.session_id,
@@ -147,7 +159,6 @@ export function WebSocketProvider({ children }) {
       // session_raw - Response to get_session_raw
       // =============================================
       if (data.type === 'session_raw') {
-        console.log('📈 Session Raw:', data.count, 'points');
         if (data.ok) {
           setSelectedSessionRawPoints({
             sessionId: data.session_id,
@@ -166,7 +177,6 @@ export function WebSocketProvider({ children }) {
       // export_result - Response to export_session
       // =============================================
       if (data.type === 'export_result') {
-        console.log('📦 Export Result:', data.ok, data.filename);
         setExportResult({
           ok: data.ok,
           filename: data.filename,
@@ -183,14 +193,20 @@ export function WebSocketProvider({ children }) {
       // ACK messages
       // =============================================
       if (data.type === 'ack') {
-        console.log('✅ ACK:', data.action);
         if (data.action === 'start') {
+          setIsRecording(true);
+          setRepCount(0);
           setRepEvents([]);
           setCurrentSessionSummary(null);
           setLastRepEvent(null);
           setLiveTutSec(0);
           setLiveAvgTempoSec(null);
           setLiveOutputLossPct(null);
+          setLiveAvgPeakSpeedProxy(null);
+          setLiveSpeedLossPct(null);
+        }
+        if (data.action === 'stop') {
+          setIsRecording(false);
         }
       }
 
@@ -208,7 +224,6 @@ export function WebSocketProvider({ children }) {
       return;
     }
 
-    // Store Pi IP address for export URL building
     if (ipAddress) {
       setPiIpAddress(ipAddress);
     }
@@ -245,10 +260,11 @@ export function WebSocketProvider({ children }) {
       setLiveTutSec(0);
       setLiveAvgTempoSec(null);
       setLiveOutputLossPct(null);
+      setLiveAvgPeakSpeedProxy(null);
+      setLiveSpeedLossPct(null);
     }
   }, []);
 
-  // Allow setting Pi IP separately (e.g., from ConnectScreen)
   const setPiIp = useCallback((ip) => {
     setPiIpAddress(ip);
   }, []);
@@ -272,11 +288,13 @@ export function WebSocketProvider({ children }) {
     setLiveTutSec(0);
     setLiveAvgTempoSec(null);
     setLiveOutputLossPct(null);
-    return sendMessage({ type: 'command', action: 'start' });
+    setLiveAvgPeakSpeedProxy(null);
+    setLiveSpeedLossPct(null);
+    return sendMessage({ type: 'cmd', action: 'start' });
   }, [sendMessage]);
 
   const stopRecording = useCallback(() => {
-    return sendMessage({ type: 'command', action: 'stop' });
+    return sendMessage({ type: 'cmd', action: 'stop' });
   }, [sendMessage]);
 
   // =============================================
@@ -353,7 +371,6 @@ export function WebSocketProvider({ children }) {
     setExportLoading(false);
   }, []);
 
-  // Build download URL with actual Pi IP
   const buildExportUrl = useCallback((urlTemplate) => {
     if (!urlTemplate || !piIpAddress) return null;
     return urlTemplate.replace('<PI_IP>', piIpAddress);
@@ -364,7 +381,6 @@ export function WebSocketProvider({ children }) {
   // =============================================
   useEffect(() => {
     if (connectionStatus === 'connected' && lastRequestedSessionId.current) {
-      console.log('🔄 Reconnected - Re-requesting session:', lastRequestedSessionId.current);
       requestSessionDetail(lastRequestedSessionId.current);
       requestSessionRaw(lastRequestedSessionId.current);
     }
@@ -385,6 +401,10 @@ export function WebSocketProvider({ children }) {
     liveTutSec,
     liveAvgTempoSec,
     liveOutputLossPct,
+    
+    // Velocity proxy (live)
+    liveAvgPeakSpeedProxy,
+    liveSpeedLossPct,
     
     // Rep events
     repEvents,

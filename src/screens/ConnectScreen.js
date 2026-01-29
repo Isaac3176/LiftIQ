@@ -79,7 +79,7 @@ export default function ConnectScreen({ onConnected }) {
                 style={styles.input}
                 value={ipAddress}
                 onChangeText={setIpAddress}
-                placeholder="192.168.1.100"
+                placeholder="10.83.5.191"
                 placeholderTextColor="#666"
                 keyboardType="numeric"
                 autoCapitalize="none"
