@@ -8,7 +8,6 @@ export function WebSocketProvider({ children }) {
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [lastMessage, setLastMessage] = useState(null);
   
-  // Store Pi IP address for export URL building
   const [piIpAddress, setPiIpAddress] = useState(null);
   
   // =============================================
@@ -22,15 +21,26 @@ export function WebSocketProvider({ children }) {
   const [liveAvgTempoSec, setLiveAvgTempoSec] = useState(null);
   const [liveOutputLossPct, setLiveOutputLossPct] = useState(null);
   
-  // Velocity proxy fields (from rep_update)
+  // Velocity proxy fields (gyro-based)
   const [liveAvgPeakSpeedProxy, setLiveAvgPeakSpeedProxy] = useState(null);
   const [liveSpeedLossPct, setLiveSpeedLossPct] = useState(null);
   
-  // Rep events (for animation)
+  // NEW: ML Pipeline fields (physics-based)
+  const [liveVelocity, setLiveVelocity] = useState(0);
+  const [liveDisplacement, setLiveDisplacement] = useState(0);
+  const [liveRoll, setLiveRoll] = useState(0);
+  const [livePitch, setLivePitch] = useState(0);
+  const [liveYaw, setLiveYaw] = useState(0);
+  const [liveAvgVelocityMs, setLiveAvgVelocityMs] = useState(null);
+  const [liveVelocityLossPct, setLiveVelocityLossPct] = useState(null);
+  const [liveAvgRomM, setLiveAvgRomM] = useState(null);
+  const [liveRomLossPct, setLiveRomLossPct] = useState(null);
+  
+  // Rep events
   const [repEvents, setRepEvents] = useState([]);
   const [lastRepEvent, setLastRepEvent] = useState(null);
   
-  // Current session summary (after stop)
+  // Current session summary
   const [currentSessionSummary, setCurrentSessionSummary] = useState(null);
   
   // =============================================
@@ -45,15 +55,11 @@ export function WebSocketProvider({ children }) {
   const [selectedSessionRawPoints, setSelectedSessionRawPoints] = useState(null);
   const [selectedSessionRawLoading, setSelectedSessionRawLoading] = useState(false);
   
-  // =============================================
   // Export state
-  // =============================================
   const [exportResult, setExportResult] = useState(null);
   const [exportLoading, setExportLoading] = useState(false);
   
-  // Track last requested session for reconnect
   const lastRequestedSessionId = useRef(null);
-  
   const wsRef = useRef(null);
 
   const handleMessage = useCallback((event) => {
@@ -65,6 +71,7 @@ export function WebSocketProvider({ children }) {
       // rep_update - Live stream (~10Hz)
       // =============================================
       if (data.type === 'rep_update') {
+        // Core fields
         if (data.reps !== undefined) setRepCount(data.reps);
         if (data.state !== undefined) setCurrentState(data.state);
         if (data.recording !== undefined) setIsRecording(data.recording);
@@ -73,9 +80,20 @@ export function WebSocketProvider({ children }) {
         if (data.avg_tempo_sec !== undefined) setLiveAvgTempoSec(data.avg_tempo_sec);
         if (data.output_loss_pct !== undefined) setLiveOutputLossPct(data.output_loss_pct);
         
-        // Velocity proxy fields
+        // Velocity proxy (gyro-based)
         if (data.avg_peak_speed_proxy !== undefined) setLiveAvgPeakSpeedProxy(data.avg_peak_speed_proxy);
         if (data.speed_loss_pct !== undefined) setLiveSpeedLossPct(data.speed_loss_pct);
+        
+        // NEW: ML Pipeline fields (physics-based)
+        if (data.velocity !== undefined) setLiveVelocity(data.velocity);
+        if (data.displacement !== undefined) setLiveDisplacement(data.displacement);
+        if (data.roll !== undefined) setLiveRoll(data.roll);
+        if (data.pitch !== undefined) setLivePitch(data.pitch);
+        if (data.yaw !== undefined) setLiveYaw(data.yaw);
+        if (data.avg_velocity_ms !== undefined) setLiveAvgVelocityMs(data.avg_velocity_ms);
+        if (data.velocity_loss_pct !== undefined) setLiveVelocityLossPct(data.velocity_loss_pct);
+        if (data.avg_rom_m !== undefined) setLiveAvgRomM(data.avg_rom_m);
+        if (data.rom_loss_pct !== undefined) setLiveRomLossPct(data.rom_loss_pct);
         return;
       }
 
@@ -88,9 +106,15 @@ export function WebSocketProvider({ children }) {
           t: data.t,
           confidence: data.confidence,
           tempoSec: data.tempo_sec,
+          // Gyro-based proxy
           peakSpeedProxy: data.peak_speed_proxy,
           avgSpeedProxy: data.avg_speed_proxy,
           peakGyro: data.peak_gyro || data.peak_speed_proxy,
+          // NEW: Physics-based velocity/ROM
+          peakVelocityMs: data.peak_velocity_ms,
+          meanConcentricVelocityMs: data.mean_concentric_velocity_ms,
+          romM: data.rom_m,
+          romCm: data.rom_cm,
           receivedAt: Date.now()
         }]);
         setLastRepEvent({
@@ -100,7 +124,11 @@ export function WebSocketProvider({ children }) {
           tempoSec: data.tempo_sec,
           peakSpeedProxy: data.peak_speed_proxy,
           avgSpeedProxy: data.avg_speed_proxy,
-          peakGyro: data.peak_gyro || data.peak_speed_proxy
+          peakGyro: data.peak_gyro || data.peak_speed_proxy,
+          peakVelocityMs: data.peak_velocity_ms,
+          meanConcentricVelocityMs: data.mean_concentric_velocity_ms,
+          romM: data.rom_m,
+          romCm: data.rom_cm
         });
         return;
       }
@@ -118,15 +146,21 @@ export function WebSocketProvider({ children }) {
           repBreakdown: data.rep_breakdown || [],
           outputLossPct: data.output_loss_pct ?? null,
           peakGyroPerRep: data.peak_gyro_per_rep || [],
+          // Gyro-based proxy
           avgPeakSpeedProxy: data.avg_peak_speed_proxy ?? null,
           speedLossPct: data.speed_loss_pct ?? null,
+          // NEW: Physics-based velocity/ROM
+          avgVelocityMs: data.avg_velocity_ms ?? null,
+          velocityLossPct: data.velocity_loss_pct ?? null,
+          avgRomM: data.avg_rom_m ?? null,
+          romLossPct: data.rom_loss_pct ?? null,
           receivedAt: Date.now()
         });
         return;
       }
 
       // =============================================
-      // sessions_list - Response to list_sessions
+      // sessions_list
       // =============================================
       if (data.type === 'sessions_list') {
         setSessionsList({
@@ -139,7 +173,7 @@ export function WebSocketProvider({ children }) {
       }
 
       // =============================================
-      // session_detail - Response to get_session
+      // session_detail
       // =============================================
       if (data.type === 'session_detail') {
         if (data.ok) {
@@ -156,7 +190,7 @@ export function WebSocketProvider({ children }) {
       }
 
       // =============================================
-      // session_raw - Response to get_session_raw
+      // session_raw
       // =============================================
       if (data.type === 'session_raw') {
         if (data.ok) {
@@ -174,7 +208,7 @@ export function WebSocketProvider({ children }) {
       }
 
       // =============================================
-      // export_result - Response to export_session
+      // export_result
       // =============================================
       if (data.type === 'export_result') {
         setExportResult({
@@ -204,6 +238,13 @@ export function WebSocketProvider({ children }) {
           setLiveOutputLossPct(null);
           setLiveAvgPeakSpeedProxy(null);
           setLiveSpeedLossPct(null);
+          // Reset ML fields
+          setLiveVelocity(0);
+          setLiveDisplacement(0);
+          setLiveAvgVelocityMs(null);
+          setLiveVelocityLossPct(null);
+          setLiveAvgRomM(null);
+          setLiveRomLossPct(null);
         }
         if (data.action === 'stop') {
           setIsRecording(false);
@@ -219,28 +260,17 @@ export function WebSocketProvider({ children }) {
   // Connection Management
   // =============================================
   const connect = useCallback((ws, ipAddress) => {
-    if (wsRef.current) {
-      console.log('WebSocket already exists');
-      return;
-    }
+    if (wsRef.current) return;
 
-    if (ipAddress) {
-      setPiIpAddress(ipAddress);
-    }
+    if (ipAddress) setPiIpAddress(ipAddress);
 
     wsRef.current = ws;
     setWebsocket(ws);
     setConnectionStatus('connected');
 
     ws.onmessage = handleMessage;
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      setConnectionStatus('error');
-    };
-
+    ws.onerror = () => setConnectionStatus('error');
     ws.onclose = () => {
-      console.log('WebSocket closed');
       setConnectionStatus('disconnected');
       wsRef.current = null;
       setWebsocket(null);
@@ -262,19 +292,22 @@ export function WebSocketProvider({ children }) {
       setLiveOutputLossPct(null);
       setLiveAvgPeakSpeedProxy(null);
       setLiveSpeedLossPct(null);
+      setLiveVelocity(0);
+      setLiveDisplacement(0);
+      setLiveAvgVelocityMs(null);
+      setLiveVelocityLossPct(null);
+      setLiveAvgRomM(null);
+      setLiveRomLossPct(null);
     }
   }, []);
 
-  const setPiIp = useCallback((ip) => {
-    setPiIpAddress(ip);
-  }, []);
+  const setPiIp = useCallback((ip) => setPiIpAddress(ip), []);
 
   const sendMessage = useCallback((message) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
       return true;
     }
-    console.warn('WebSocket not connected');
     return false;
   }, []);
 
@@ -290,6 +323,12 @@ export function WebSocketProvider({ children }) {
     setLiveOutputLossPct(null);
     setLiveAvgPeakSpeedProxy(null);
     setLiveSpeedLossPct(null);
+    setLiveVelocity(0);
+    setLiveDisplacement(0);
+    setLiveAvgVelocityMs(null);
+    setLiveVelocityLossPct(null);
+    setLiveAvgRomM(null);
+    setLiveRomLossPct(null);
     return sendMessage({ type: 'cmd', action: 'start' });
   }, [sendMessage]);
 
@@ -302,11 +341,7 @@ export function WebSocketProvider({ children }) {
   // =============================================
   const requestSessions = useCallback((limit = 30) => {
     setSessionsLoading(true);
-    const sent = sendMessage({ 
-      type: 'cmd', 
-      action: 'list_sessions', 
-      limit 
-    });
+    const sent = sendMessage({ type: 'cmd', action: 'list_sessions', limit });
     if (!sent) setSessionsLoading(false);
     return sent;
   }, [sendMessage]);
@@ -315,11 +350,7 @@ export function WebSocketProvider({ children }) {
     lastRequestedSessionId.current = sessionId;
     setSelectedSessionLoading(true);
     setSelectedSessionSummary(null);
-    const sent = sendMessage({ 
-      type: 'cmd', 
-      action: 'get_session', 
-      session_id: sessionId 
-    });
+    const sent = sendMessage({ type: 'cmd', action: 'get_session', session_id: sessionId });
     if (!sent) setSelectedSessionLoading(false);
     return sent;
   }, [sendMessage]);
@@ -327,13 +358,7 @@ export function WebSocketProvider({ children }) {
   const requestSessionRaw = useCallback((sessionId, limit = 2000, stride = 5) => {
     setSelectedSessionRawLoading(true);
     setSelectedSessionRawPoints(null);
-    const sent = sendMessage({ 
-      type: 'cmd', 
-      action: 'get_session_raw', 
-      session_id: sessionId,
-      limit,
-      stride
-    });
+    const sent = sendMessage({ type: 'cmd', action: 'get_session_raw', session_id: sessionId, limit, stride });
     if (!sent) setSelectedSessionRawLoading(false);
     return sent;
   }, [sendMessage]);
@@ -352,13 +377,7 @@ export function WebSocketProvider({ children }) {
   const requestExportSession = useCallback((sessionId, httpPort = 8000) => {
     setExportLoading(true);
     setExportResult(null);
-    const sent = sendMessage({ 
-      type: 'cmd', 
-      action: 'export_session', 
-      session_id: sessionId,
-      start_http: true,
-      http_port: httpPort
-    });
+    const sent = sendMessage({ type: 'cmd', action: 'export_session', session_id: sessionId, start_http: true, http_port: httpPort });
     if (!sent) {
       setExportLoading(false);
       setExportResult({ ok: false, error: 'Not connected' });
@@ -388,57 +407,40 @@ export function WebSocketProvider({ children }) {
 
   const value = {
     // Connection
-    websocket,
-    connectionStatus,
-    lastMessage,
-    piIpAddress,
+    websocket, connectionStatus, lastMessage, piIpAddress,
     
-    // Live workout data (authoritative from server)
-    repCount,
-    currentState,
-    isRecording,
-    gyroFilt,
-    liveTutSec,
-    liveAvgTempoSec,
-    liveOutputLossPct,
+    // Live workout data
+    repCount, currentState, isRecording, gyroFilt,
+    liveTutSec, liveAvgTempoSec, liveOutputLossPct,
     
-    // Velocity proxy (live)
-    liveAvgPeakSpeedProxy,
-    liveSpeedLossPct,
+    // Velocity proxy (gyro-based)
+    liveAvgPeakSpeedProxy, liveSpeedLossPct,
+    
+    // ML Pipeline (physics-based)
+    liveVelocity, liveDisplacement,
+    liveRoll, livePitch, liveYaw,
+    liveAvgVelocityMs, liveVelocityLossPct,
+    liveAvgRomM, liveRomLossPct,
     
     // Rep events
-    repEvents,
-    lastRepEvent,
+    repEvents, lastRepEvent,
     
     // Current session summary
     currentSessionSummary,
     
     // History & Sessions
-    sessionsList,
-    sessionsLoading,
-    selectedSessionSummary,
-    selectedSessionLoading,
-    selectedSessionRawPoints,
-    selectedSessionRawLoading,
+    sessionsList, sessionsLoading,
+    selectedSessionSummary, selectedSessionLoading,
+    selectedSessionRawPoints, selectedSessionRawLoading,
     
     // Export
-    exportResult,
-    exportLoading,
+    exportResult, exportLoading,
     
     // Methods
-    connect,
-    disconnect,
-    setPiIp,
-    sendMessage,
-    startRecording,
-    stopRecording,
-    requestSessions,
-    requestSessionDetail,
-    requestSessionRaw,
-    clearSelectedSession,
-    requestExportSession,
-    clearExportResult,
-    buildExportUrl,
+    connect, disconnect, setPiIp, sendMessage,
+    startRecording, stopRecording,
+    requestSessions, requestSessionDetail, requestSessionRaw, clearSelectedSession,
+    requestExportSession, clearExportResult, buildExportUrl,
   };
 
   return (
