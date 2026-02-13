@@ -1,115 +1,102 @@
 # LiftIQ Sensor Packet Schema
 
-## Overview
+## Dataset: Kaggle Gym Workout IMU Dataset
 
-This document defines the standardized sensor packet format for the LiftIQ weightlifting tracking system. All components in the ML pipeline should conform to this schema for interoperability.
+| Property | Value |
+|----------|-------|
+| Sensor | Apple Watch SE |
+| Location | Left wrist |
+| Sample Rate | 100 Hz |
+| Total Sets | 164 |
+| Channels | 6 (accel xyz + gyro xyz) |
 
-## Sensor Packet Fields
+## Sensor Channels
 
-| Field     | Type    | Units   | Range              | Description                              |
-|-----------|---------|---------|--------------------|-----------------------------------------|
-| timestamp | float   | seconds | >= 0               | Time since session start                 |
-| ax        | float   | m/s²    | ±156.8 (±16g)      | Accelerometer X-axis                     |
-| ay        | float   | m/s²    | ±156.8 (±16g)      | Accelerometer Y-axis                     |
-| az        | float   | m/s²    | ±156.8 (±16g)      | Accelerometer Z-axis                     |
-| gx        | float   | deg/s   | ±2000              | Gyroscope X-axis (roll rate)             |
-| gy        | float   | deg/s   | ±2000              | Gyroscope Y-axis (pitch rate)            |
-| gz        | float   | deg/s   | ±2000              | Gyroscope Z-axis (yaw rate)              |
+| Index | Field | Units | Description |
+|-------|-------|-------|-------------|
+| 0 | ax | m/s² | Accelerometer X |
+| 1 | ay | m/s² | Accelerometer Y |
+| 2 | az | m/s² | Accelerometer Z |
+| 3 | gx | rad/s | Gyroscope X |
+| 4 | gy | rad/s | Gyroscope Y |
+| 5 | gz | rad/s | Gyroscope Z |
 
-## Derived Fields (from orientation fusion)
+## File Naming Convention
 
-| Field     | Type    | Units   | Range              | Description                              |
-|-----------|---------|---------|--------------------|-----------------------------------------|
-| roll      | float   | degrees | -180 to +180       | Rotation about X-axis                    |
-| pitch     | float   | degrees | -90 to +90         | Rotation about Y-axis                    |
-| yaw       | float   | degrees | -180 to +180       | Rotation about Z-axis                    |
-| a_lin_x   | float   | m/s²    | ±156.8             | Linear acceleration X (gravity removed)  |
-| a_lin_y   | float   | m/s²    | ±156.8             | Linear acceleration Y (gravity removed)  |
-| a_lin_z   | float   | m/s²    | ±156.8             | Linear acceleration Z (gravity removed)  |
-
-## Velocity & Position Fields
-
-| Field       | Type    | Units   | Description                              |
-|-------------|---------|---------|------------------------------------------|
-| velocity    | float   | m/s     | Estimated bar velocity (vertical)        |
-| displacement| float   | meters  | Position relative to rep start           |
-| rom         | float   | meters  | Range of motion for completed rep        |
-
-## Units Convention
-
-### Acceleration
-- **Raw IMU**: Often in g-units (1g = 9.81 m/s²)
-- **Pipeline Standard**: m/s² (SI units)
-- **Conversion**: `accel_ms2 = accel_g * 9.81`
-
-### Gyroscope
-- **Raw IMU**: Often in deg/s
-- **Pipeline Standard**: deg/s for storage, rad/s for calculations
-- **Conversion**: `gyro_rads = gyro_degs * (π / 180)`
-
-### Angles
-- **Storage**: degrees
-- **Calculations**: radians internally
-- **Convention**: Right-hand rule, NED (North-East-Down) or sensor-frame
-
-### Time
-- **Units**: seconds (float)
-- **Resolution**: millisecond precision minimum
-- **Reference**: Session start = 0.0
-
-## Sample Rate
-
-- **Target Rate**: 50 Hz
-- **Acceptable Range**: 20-100 Hz
-- **Recommendation**: Resample to 50 Hz for consistency
-
-## Coordinate System
-
-### Sensor Mounting (Barbell)
-When mounted on a barbell with the sensor flat on top:
-- **X-axis**: Along the barbell (left-right)
-- **Y-axis**: Perpendicular to barbell (forward-backward)  
-- **Z-axis**: Vertical (up-down) - **primary axis for velocity**
-
-### Gravity Vector
-At rest with sensor flat:
-- `ax ≈ 0 m/s²`
-- `ay ≈ 0 m/s²`
-- `az ≈ +9.81 m/s²` (or -9.81 depending on orientation)
-
-## Example Packet (JSON)
-
-```json
-{
-  "timestamp": 1.234,
-  "ax": 0.15,
-  "ay": -0.08,
-  "az": 9.75,
-  "gx": 2.3,
-  "gy": -1.1,
-  "gz": 0.5,
-  "roll": 0.8,
-  "pitch": -0.4,
-  "yaw": 12.3,
-  "a_lin_x": 0.12,
-  "a_lin_y": -0.05,
-  "a_lin_z": -0.06,
-  "velocity": 0.45,
-  "displacement": 0.12
-}
+```
+ddmmyy_CODE_Wxx_Sx_Rxx.csv
 ```
 
-## Data Quality Indicators
+| Part | Description | Example |
+|------|-------------|---------|
+| ddmmyy | Date | 010123 |
+| CODE | Exercise abbreviation | SMS |
+| Wxx | Weight (kg) | W50 |
+| Sx | Set number | S1 |
+| Rxx | Rep count | R10 |
 
-| Metric              | Good       | Acceptable  | Poor        |
-|---------------------|------------|-------------|-------------|
-| Sample rate jitter  | < 5%       | < 10%       | > 10%       |
-| Orientation drift   | < 1°/min   | < 3°/min    | > 3°/min    |
-| Velocity drift      | < 0.1 m/s  | < 0.3 m/s   | > 0.3 m/s   |
-| ZUPT effectiveness  | Resets to 0| Within 0.05 | > 0.1 m/s   |
+## Exercise Codes (39 exercises)
 
-## Version History
+| Code | Exercise |
+|------|----------|
+| SBLP | Straight Bar Lat Pulldown |
+| CGCR | Close Grip Cable Row |
+| NGCR | Neutral Grip Cable Row |
+| SAP | Single Arm Pulldown |
+| MGTBR | Mid Grip T Bar Rows |
+| AIDBC | Alternating Incline Dumbbell Bicep Curl |
+| MPBC | Machine Preacher Bicep Curl |
+| SHC | Seated Hamstring Curl |
+| SMS | Smith Machine Squat |
+| LE | Leg Extension |
+| 30DBP | 30 Incline Dumbbell Bench Press |
+| DSP | 75 deg Dumbbell Shoulder Press |
+| DLR | Dumbbell Lateral Raise |
+| SACLR | Single Arm Cable Lateral Raise |
+| MRF | Machine Rear Fly |
+| FAPU | Face Pulls |
+| SBCTP | Straight Bar Cable Tricep Pushdown |
+| MSP | Machine Shoulder Press |
+| SECR | Standing Calf Raise |
+| PUSH | Pushups |
+| PULL | Pullups |
+| MTE | Machine Tricep Extension |
+| SHSS | Slow Half Smith Squats |
+| STCR | Seated Calf Raise |
+| ILE | Isometric Leg Extension |
+| CRDP | Cable Rear Delt Pull |
+| MIBP | Machine Incline Bench Press |
+| APULL | Assisted Pullup |
+| PREC | Preacher Curls |
+| SSLHS | Slow Single Leg Half Squat |
+| HT | Hip Thrust |
+| SAOCTE | Single Arm Overhead Cable Tricep Ext |
+| 45DBP | 45 Incline Dumbbell Bench Press |
+| SAODTE | Single Arm Overhead Dumbbell Tricep Ext |
+| LHC | Lying Hamstring Curl |
+| IDBC | Incline Dumbbell Bicep Curl |
+| DWC | Dumbbell Wrist Curl |
+| CGOCTE | Close Grip Overhead Cable Tricep Ext |
+| 30BP | 30deg Incline Bench Press |
 
-| Version | Date       | Changes                                    |
-|---------|------------|--------------------------------------------|
-| 1.0     | 2025-01-31 | Initial schema definition                  |
+## Preprocessing Parameters
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| Trim start | 1.5s (150 samples) | Remove sensor lag |
+| Trim end | 1.5s (150 samples) | Remove noise |
+| Window length | 2.5s (250 samples) | Captures 1-2 reps |
+| Window stride | 0.5s (50 samples) | 80% overlap |
+| Normalization | Z-score per channel | Training stats only |
+| Min windows/class | 3 | Filter rare exercises |
+
+## Model Input/Output
+
+- **Input Shape**: `(batch, 250, 6)`
+- **Output Shape**: `(batch, num_classes)`
+- **Confidence Threshold**: 0.6 (below shows "Unknown")
+
+## Label Columns in CSV
+
+- `activity` - String abbreviation (e.g., "SMS", "SBLP")
+- `activityEncoded` - Integer encoding

@@ -2,18 +2,11 @@
 Preprocess Kaggle Gym Workout IMU Dataset for lift classification.
 
 Dataset: Kaggle Gym Workout IMU Dataset
-- Sensor: Apple Watch SE (left wrist)
-- Sample Rate: 100 Hz
-- Total Sets: 164
-- File format: ddmmyy_CODE_Wxx_Sx_Rxx.csv
+Sensor: Apple Watch SE (left wrist), 100 Hz
+File format: ddmmyy_CODE_Wxx_Sx_Rxx.csv
 
 Usage:
     python preprocess_recgym.py
-    python preprocess_recgym.py --input_dir ml/data/recgym_raw
-
-Output:
-    - ml/data/recgym_processed/windows.npz
-    - ml/data/recgym_processed/metadata.json
 """
 
 import os
@@ -40,10 +33,31 @@ WINDOW_SAMPLES = int(WINDOW_SEC * SAMPLE_RATE_HZ)          # 250
 STRIDE_SAMPLES = int(STRIDE_SEC * SAMPLE_RATE_HZ)          # 50
 
 MIN_SAMPLES_AFTER_TRIM = WINDOW_SAMPLES
-MIN_WINDOWS_PER_CLASS = 3  # Lower threshold since some exercises are rare
+MIN_WINDOWS_PER_CLASS = 3
 
 # =============================================================================
-# Exercise Code Mapping (from Kaggle dataset description)
+# Column Mappings - UPDATED FOR YOUR DATASET
+# =============================================================================
+
+# Your CSV columns:
+# - wristMotion_accelerationX/Y/Z (accelerometer)
+# - wristMotion_rotationRateX/Y/Z (gyroscope)
+# - wristMotion_gravityX/Y/Z (gravity vector)
+# - activity (label)
+
+ACCEL_X_COL = 'wristMotion_accelerationX'
+ACCEL_Y_COL = 'wristMotion_accelerationY'
+ACCEL_Z_COL = 'wristMotion_accelerationZ'
+GYRO_X_COL = 'wristMotion_rotationRateX'
+GYRO_Y_COL = 'wristMotion_rotationRateY'
+GYRO_Z_COL = 'wristMotion_rotationRateZ'
+LABEL_COL = 'activity'
+
+# Feature columns in order
+FEATURE_COLS = [ACCEL_X_COL, ACCEL_Y_COL, ACCEL_Z_COL, GYRO_X_COL, GYRO_Y_COL, GYRO_Z_COL]
+
+# =============================================================================
+# Exercise Code Mapping
 # =============================================================================
 
 EXERCISE_CODES = {
@@ -88,124 +102,52 @@ EXERCISE_CODES = {
     '30BP': '30deg Incline Bench Press',
 }
 
-# =============================================================================
-# Column Name Mappings (handle different CSV formats)
-# =============================================================================
-
-ACCEL_X_NAMES = ['ax', 'acc_x', 'accel_x', 'accelerometerAccelerationX', 'Accel_X']
-ACCEL_Y_NAMES = ['ay', 'acc_y', 'accel_y', 'accelerometerAccelerationY', 'Accel_Y']
-ACCEL_Z_NAMES = ['az', 'acc_z', 'accel_z', 'accelerometerAccelerationZ', 'Accel_Z']
-GYRO_X_NAMES = ['gx', 'gyro_x', 'gyroRotationX', 'Gyro_X']
-GYRO_Y_NAMES = ['gy', 'gyro_y', 'gyroRotationY', 'Gyro_Y']
-GYRO_Z_NAMES = ['gz', 'gyro_z', 'gyroRotationZ', 'Gyro_Z']
-LABEL_COL_NAMES = ['activity', 'label', 'exercise', 'Activity', 'Label']
-
-
-def find_column(df, possible_names):
-    """Find a column by checking multiple possible names."""
-    for name in possible_names:
-        if name in df.columns:
-            return name
-    return None
-
 
 # =============================================================================
 # Helper Functions
 # =============================================================================
 
-def parse_filename(filename: str) -> dict:
-    """
-    Parse exercise info from filename.
-    Format: ddmmyy_CODE_Wxx_Sx_Rxx.csv
-    """
-    name = Path(filename).stem
-    parts = name.split('_')
-    
-    info = {
-        'filename': filename,
-        'date': None,
-        'exercise_code': None,
-        'weight': None,
-        'set_num': None,
-        'reps': None,
-    }
-    
-    if len(parts) >= 2:
-        info['date'] = parts[0]
-        info['exercise_code'] = parts[1]
-    
-    for part in parts[2:]:
-        p = part.upper()
-        if p.startswith('W') and p[1:].isdigit():
-            info['weight'] = int(p[1:])
-        elif p.startswith('S') and p[1:].isdigit():
-            info['set_num'] = int(p[1:])
-        elif p.startswith('R') and p[1:].isdigit():
-            info['reps'] = int(p[1:])
-    
-    return info
-
-
-def load_csv_file(filepath: str, verbose: bool = False) -> tuple:
+def load_csv_file(filepath: str) -> tuple:
     """Load a single CSV file and extract features + label."""
     try:
         df = pd.read_csv(filepath)
     except Exception as e:
-        if verbose:
-            print(f"  Error reading {filepath}: {e}")
+        print(f"  Error reading {Path(filepath).name}: {e}")
         return None, None, None
     
     if len(df) == 0:
+        print(f"  Empty file: {Path(filepath).name}")
         return None, None, None
     
-    # Find feature columns
-    ax_col = find_column(df, ACCEL_X_NAMES)
-    ay_col = find_column(df, ACCEL_Y_NAMES)
-    az_col = find_column(df, ACCEL_Z_NAMES)
-    gx_col = find_column(df, GYRO_X_NAMES)
-    gy_col = find_column(df, GYRO_Y_NAMES)
-    gz_col = find_column(df, GYRO_Z_NAMES)
-    
-    missing = []
-    if ax_col is None: missing.append('accel_x')
-    if ay_col is None: missing.append('accel_y')
-    if az_col is None: missing.append('accel_z')
-    if gx_col is None: missing.append('gyro_x')
-    if gy_col is None: missing.append('gyro_y')
-    if gz_col is None: missing.append('gyro_z')
-    
+    # Check for required columns
+    missing = [c for c in FEATURE_COLS if c not in df.columns]
     if missing:
-        if verbose:
-            print(f"  Missing columns in {Path(filepath).name}: {missing}")
-            print(f"  Available: {list(df.columns)}")
+        print(f"  Missing columns in {Path(filepath).name}: {missing}")
         return None, None, None
     
-    # Get label from 'activity' column first
+    # Get label from 'activity' column
     label = None
-    label_col = find_column(df, LABEL_COL_NAMES)
-    if label_col:
-        labels = df[label_col].dropna().unique()
+    if LABEL_COL in df.columns:
+        labels = df[LABEL_COL].dropna().unique()
         if len(labels) >= 1:
             label = str(labels[0]).strip()
     
-    # Fallback: get from filename
     if label is None:
-        info = parse_filename(filepath)
-        label = info.get('exercise_code')
-    
-    if label is None:
+        print(f"  No label in {Path(filepath).name}")
         return None, None, None
     
-    # Extract features
-    data = df[[ax_col, ay_col, az_col, gx_col, gy_col, gz_col]].values.astype(np.float32)
+    # Extract features: [ax, ay, az, gx, gy, gz]
+    data = df[FEATURE_COLS].values.astype(np.float32)
     
     # Handle NaN/Inf
     if np.any(~np.isfinite(data)):
         data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
     
-    info = parse_filename(filepath)
-    info['original_samples'] = len(data)
-    info['label'] = label
+    info = {
+        'filename': Path(filepath).name,
+        'original_samples': len(data),
+        'label': label,
+    }
     
     return data, label, info
 
@@ -262,12 +204,11 @@ def process_dataset(input_dir: str, output_dir: str, test_size: float = 0.2, val
     
     if len(csv_files) == 0:
         print(f"\nNo CSV files found!")
-        print("Run: python download_recgym.py")
         return
     
     # Show sample files
     print("\nSample files:")
-    for f in csv_files[:5]:
+    for f in csv_files[:3]:
         print(f"  {f.name}")
     
     # Process files
@@ -307,7 +248,6 @@ def process_dataset(input_dir: str, output_dir: str, test_size: float = 0.2, val
             all_file_indices.append(file_idx)
             label_counts[label] += 1
         
-        info['trimmed_samples'] = len(trimmed)
         info['num_windows'] = len(windows)
         file_infos.append(info)
     
@@ -317,6 +257,10 @@ def process_dataset(input_dir: str, output_dir: str, test_size: float = 0.2, val
     
     if len(all_windows) == 0:
         print("\nNo windows extracted! Check data format.")
+        if skipped[:5]:
+            print("\nFirst 5 skipped files:")
+            for s in skipped[:5]:
+                print(f"  {s}")
         return
     
     X = np.array(all_windows)
@@ -326,13 +270,13 @@ def process_dataset(input_dir: str, output_dir: str, test_size: float = 0.2, val
     print("\n" + "="*60)
     print("EXERCISE DISTRIBUTION")
     print("="*60)
-    print(f"{'Code':<12} {'Full Name':<45} {'Windows':>8}")
+    print(f"{'Code':<12} {'Full Name':<40} {'Windows':>8}")
     print("-"*60)
     for label, count in sorted(label_counts.items(), key=lambda x: -x[1]):
-        full_name = EXERCISE_CODES.get(label, 'Unknown')[:44]
-        print(f"{label:<12} {full_name:<45} {count:>8}")
+        full_name = EXERCISE_CODES.get(label, 'Unknown')[:39]
+        print(f"{label:<12} {full_name:<40} {count:>8}")
     print("-"*60)
-    print(f"{'TOTAL':<12} {'':<45} {sum(label_counts.values()):>8}")
+    print(f"{'TOTAL':<12} {'':<40} {sum(label_counts.values()):>8}")
     
     # Filter rare classes
     valid_labels = {l for l, c in label_counts.items() if c >= MIN_WINDOWS_PER_CLASS}
@@ -363,7 +307,6 @@ def process_dataset(input_dir: str, output_dir: str, test_size: float = 0.2, val
     unique_files = np.unique(file_indices)
     print(f"\nSplitting {len(unique_files)} recordings into train/val/test...")
     
-    # Stratified split would be ideal but files per class may be too few
     train_files, temp_files = train_test_split(
         unique_files, 
         test_size=test_size + val_size, 
@@ -431,6 +374,7 @@ def process_dataset(input_dir: str, output_dir: str, test_size: float = 0.2, val
         'idx_to_label': {str(k): v for k, v in idx_to_label.items()},
         'label_names': {l: EXERCISE_CODES.get(l, l) for l in sorted_labels},
         'feature_cols': ['ax', 'ay', 'az', 'gx', 'gy', 'gz'],
+        'original_feature_cols': FEATURE_COLS,
         'num_features': 6,
         'train_samples': int(len(X_train)),
         'val_samples': int(len(X_val)),
@@ -462,7 +406,7 @@ def process_dataset(input_dir: str, output_dir: str, test_size: float = 0.2, val
     print(f"Classes: {len(sorted_labels)}")
     print(f"Total windows: {len(X_train) + len(X_val) + len(X_test)}")
     print(f"Input shape: ({WINDOW_SAMPLES}, 6)")
-    print(f"\nNext step: python train_classifier.py")
+    print(f"\nNext step: python ml/scripts/train_classifier.py")
 
 
 # =============================================================================
@@ -471,10 +415,8 @@ def process_dataset(input_dir: str, output_dir: str, test_size: float = 0.2, val
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Preprocess Gym IMU dataset")
-    parser.add_argument('--input_dir', type=str, default='ml/data/recgym_raw',
-                        help='Directory containing raw CSV files')
-    parser.add_argument('--output_dir', type=str, default='ml/data/recgym_processed',
-                        help='Directory to save processed data')
+    parser.add_argument('--input_dir', type=str, default='ml/data/recgym_raw')
+    parser.add_argument('--output_dir', type=str, default='ml/data/recgym_processed')
     parser.add_argument('--test_size', type=float, default=0.2)
     parser.add_argument('--val_size', type=float, default=0.1)
     args = parser.parse_args()

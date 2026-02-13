@@ -23,10 +23,22 @@ import os
 import platform
 import zipfile
 import threading
+from collections import deque
 from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 import websockets
+import numpy as np
+
+try:
+    from tflite_runtime.interpreter import Interpreter as TFLiteInterpreter
+except Exception:
+    TFLiteInterpreter = None
+    try:
+        import tensorflow as tf
+        TFLiteInterpreter = tf.lite.Interpreter
+    except Exception:
+        TFLiteInterpreter = None
 
 # Existing imports
 from imu_driver import IMU
@@ -53,6 +65,12 @@ os.makedirs(EXPORT_DIR, exist_ok=True)
 
 # Sample rate (should match IMU configuration)
 SAMPLE_RATE_HZ = 50.0
+
+# Optional TFLite lift classification (server-side inference)
+ENABLE_TFLITE_INFERENCE = os.getenv("LIFTIQ_ENABLE_TFLITE", "0").lower() in ("1", "true", "yes")
+LIFT_MODEL_PATH = os.getenv("LIFTIQ_LIFT_MODEL_PATH", "").strip()
+LIFT_METADATA_PATH = os.getenv("LIFTIQ_LIFT_METADATA_PATH", "").strip()
+LIFT_INFER_EVERY_N = max(1, int(os.getenv("LIFTIQ_LIFT_INFER_EVERY_N", "25")))  # ~2 Hz at 50 Hz
 
 # State constants
 STATE_CALIBRATING = "CALIBRATING"
@@ -85,11 +103,15 @@ LAST_STATUS = {
     "yaw": 0.0,
     "avg_rom_m": None,
     "rom_loss_pct": None,
+    "detected_lift": None,
+    "lift_confidence": 0.0,
 }
 
 RESET_REQUESTED = False
 SERVER_DEVICE_INFO = {}
 SERVER_THRESHOLDS = {}
+LAST_DETECTED_LIFT = None
+LAST_LIFT_CONFIDENCE = 0.0
 
 _http_thread = None
 _http_port = None
@@ -160,6 +182,220 @@ def _read_json(path: str):
             return json.load(f)
     except Exception:
         return None
+
+
+def _existing_path(candidates):
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
+
+
+class LiftClassifierTFLite:
+    """Optional TFLite exercise classifier for server-side inference."""
+
+    def __init__(self, enabled: bool = False):
+        self.requested = bool(enabled)
+        self.enabled = False
+        self.reason = None
+        self.model_path = None
+        self.metadata_path = None
+
+        self.labels = []
+        self.num_classes = 0
+        self.window_samples = 250
+        self.conf_threshold = 0.6
+        self.norm_mean = np.zeros((6,), dtype=np.float32)
+        self.norm_std = np.ones((6,), dtype=np.float32)
+        self.infer_stride = LIFT_INFER_EVERY_N
+
+        self._interpreter = None
+        self._input_index = None
+        self._output_index = None
+        self._input_dtype = np.float32
+        self._input_scale = 1.0
+        self._input_zero_point = 0
+        self._output_scale = 1.0
+        self._output_zero_point = 0
+
+        self._buffer = deque(maxlen=self.window_samples)
+        self._sample_count = 0
+        self._last_infer_at = 0
+
+        self.current_label = None
+        self.current_confidence = 0.0
+        self._session_vote_sum = {}
+        self._session_best_conf = {}
+
+        if self.requested:
+            self._try_init()
+
+    def _find_model_path(self):
+        candidates = [
+            LIFT_MODEL_PATH,
+            os.path.join(BASE_DIR, "models", "lift_classifier.tflite"),
+            os.path.join(BASE_DIR, "lift_classifier.tflite"),
+            os.path.join(BASE_DIR, "..", "ml", "models", "lift_classifier.tflite"),
+        ]
+        return _existing_path(candidates)
+
+    def _find_metadata_path(self):
+        candidates = [
+            LIFT_METADATA_PATH,
+            os.path.join(BASE_DIR, "models", "lift_classifier_metadata.json"),
+            os.path.join(BASE_DIR, "lift_classifier_metadata.json"),
+            os.path.join(BASE_DIR, "..", "ml", "models", "lift_classifier_metadata.json"),
+            os.path.join(BASE_DIR, "..", "ml", "data", "recgym_processed", "metadata.json"),
+        ]
+        return _existing_path(candidates)
+
+    def _try_load_labels_fallback(self):
+        fallback = _existing_path([
+            os.path.join(BASE_DIR, "..", "ml", "data", "recgym_processed", "metadata.json"),
+        ])
+        if fallback:
+            meta = _read_json(fallback) or {}
+            labels = meta.get("labels") or []
+            if labels:
+                self.labels = list(labels)
+                self.num_classes = len(self.labels)
+
+    def _try_init(self):
+        if TFLiteInterpreter is None:
+            self.reason = "tflite_runtime_not_available"
+            return
+
+        self.model_path = self._find_model_path()
+        if not self.model_path:
+            self.reason = "model_not_found"
+            return
+
+        self.metadata_path = self._find_metadata_path()
+        metadata = _read_json(self.metadata_path) if self.metadata_path else {}
+        metadata = metadata or {}
+
+        labels = metadata.get("labels") or []
+        if labels:
+            self.labels = list(labels)
+            self.num_classes = len(self.labels)
+
+        self.window_samples = int(metadata.get("window_samples", self.window_samples))
+        self.conf_threshold = float(metadata.get("confidence_threshold", self.conf_threshold))
+
+        mean = metadata.get("norm_mean")
+        std = metadata.get("norm_std")
+        if isinstance(mean, list) and len(mean) == 6:
+            self.norm_mean = np.asarray(mean, dtype=np.float32)
+        if isinstance(std, list) and len(std) == 6:
+            arr = np.asarray(std, dtype=np.float32)
+            self.norm_std = np.where(arr == 0.0, 1.0, arr)
+
+        self._buffer = deque(maxlen=self.window_samples)
+        self._try_load_labels_fallback()
+
+        try:
+            self._interpreter = TFLiteInterpreter(model_path=self.model_path)
+            self._interpreter.allocate_tensors()
+
+            input_info = self._interpreter.get_input_details()[0]
+            output_info = self._interpreter.get_output_details()[0]
+            self._input_index = input_info["index"]
+            self._output_index = output_info["index"]
+            self._input_dtype = input_info["dtype"]
+
+            in_quant = input_info.get("quantization", (0.0, 0))
+            if in_quant and len(in_quant) == 2 and in_quant[0] not in (0, 0.0):
+                self._input_scale, self._input_zero_point = float(in_quant[0]), int(in_quant[1])
+
+            out_quant = output_info.get("quantization", (0.0, 0))
+            if out_quant and len(out_quant) == 2 and out_quant[0] not in (0, 0.0):
+                self._output_scale, self._output_zero_point = float(out_quant[0]), int(out_quant[1])
+        except Exception as e:
+            self.reason = f"init_failed:{e}"
+            self._interpreter = None
+            return
+
+        self.enabled = True
+        self.reason = None
+
+    def reset_stream(self):
+        self._buffer.clear()
+        self._sample_count = 0
+        self._last_infer_at = 0
+        self.current_label = None
+        self.current_confidence = 0.0
+
+    def start_session(self):
+        self._session_vote_sum = {}
+        self._session_best_conf = {}
+
+    def _record_session_vote(self, label: str, confidence: float):
+        if not label or label == "unknown":
+            return
+        self._session_vote_sum[label] = self._session_vote_sum.get(label, 0.0) + float(confidence)
+        self._session_best_conf[label] = max(self._session_best_conf.get(label, 0.0), float(confidence))
+
+    def session_prediction(self):
+        if not self._session_vote_sum:
+            return None, 0.0
+        top_label = max(self._session_vote_sum, key=self._session_vote_sum.get)
+        return top_label, float(self._session_best_conf.get(top_label, 0.0))
+
+    def push_sample(self, ax, ay, az, gx, gy, gz):
+        if not self.enabled:
+            return None
+
+        self._buffer.append([ax, ay, az, gx, gy, gz])
+        self._sample_count += 1
+
+        if len(self._buffer) < self.window_samples:
+            return None
+        if (self._sample_count - self._last_infer_at) < self.infer_stride:
+            return None
+        self._last_infer_at = self._sample_count
+
+        x = np.asarray(self._buffer, dtype=np.float32)
+        x = (x - self.norm_mean) / self.norm_std
+        x = np.expand_dims(x, axis=0)
+
+        if self._input_dtype != np.float32:
+            x_q = np.round((x / self._input_scale) + self._input_zero_point)
+            if self._input_dtype == np.uint8:
+                x = np.clip(x_q, 0, 255).astype(np.uint8)
+            else:
+                x = np.clip(x_q, -128, 127).astype(np.int8)
+        else:
+            x = x.astype(np.float32)
+
+        try:
+            self._interpreter.set_tensor(self._input_index, x)
+            self._interpreter.invoke()
+            y = self._interpreter.get_tensor(self._output_index)
+        except Exception:
+            return None
+
+        y = np.asarray(y)[0]
+        if y.dtype != np.float32 and self._output_scale not in (0.0, 0):
+            y = (y.astype(np.float32) - self._output_zero_point) * self._output_scale
+        else:
+            y = y.astype(np.float32)
+
+        pred_idx = int(np.argmax(y))
+        confidence = float(y[pred_idx])
+        label = self.labels[pred_idx] if pred_idx < len(self.labels) else str(pred_idx)
+
+        if confidence < self.conf_threshold:
+            label = "unknown"
+
+        self.current_label = label
+        self.current_confidence = confidence
+        self._record_session_vote(label, confidence)
+
+        return {
+            "label": label,
+            "confidence": confidence,
+            "class_idx": pred_idx,
+        }
 
 
 # =============================================================================
@@ -607,7 +843,7 @@ async def broadcast(msg: dict):
 # =============================================================================
 
 async def handle_client(ws):
-    global RESET_REQUESTED
+    global RESET_REQUESTED, LAST_DETECTED_LIFT, LAST_LIFT_CONFIDENCE
     clients.add(ws)
     print("Client connected")
 
@@ -678,6 +914,8 @@ async def handle_client(ws):
                         "velocity_loss_pct": compute_loss_pct(session.velocity_per_rep),
                         "avg_rom_m": None if avg_rom is None else round(float(avg_rom), 3),
                         "rom_loss_pct": compute_loss_pct(session.rom_per_rep),
+                        "detected_lift": LAST_DETECTED_LIFT,
+                        "lift_confidence": round(float(LAST_LIFT_CONFIDENCE), 3),
 
                         "summary_path": summary_path
                     }))
@@ -805,6 +1043,7 @@ async def handle_client(ws):
 
 async def imu_loop():
     global LAST_STATUS, RESET_REQUESTED, SERVER_DEVICE_INFO, SERVER_THRESHOLDS
+    global LAST_DETECTED_LIFT, LAST_LIFT_CONFIDENCE
 
     # Rep detection thresholds
     THRESHOLD = 1200.0
@@ -844,6 +1083,8 @@ async def imu_loop():
     except Exception:
         imu_addr_str = str(imu_addr) if imu_addr is not None else "unknown"
 
+    lift_classifier = LiftClassifierTFLite(enabled=ENABLE_TFLITE_INFERENCE)
+
     SERVER_DEVICE_INFO = json_safe({
         "pi_model": read_pi_model(),
         "imu": safe_getattr(imu, "name", None) or "IMU",
@@ -851,6 +1092,11 @@ async def imu_loop():
         "imu_addr": imu_addr_str,
         "sample_rate_hz": int(sample_rate_hz),
         "ml_pipeline_version": "1.0.0",
+        "tflite_lift_inference_requested": bool(ENABLE_TFLITE_INFERENCE),
+        "tflite_lift_inference_enabled": bool(lift_classifier.enabled),
+        "tflite_lift_model_path": lift_classifier.model_path,
+        "tflite_lift_metadata_path": lift_classifier.metadata_path,
+        "tflite_lift_reason": lift_classifier.reason,
     })
 
     # Rep counters
@@ -870,6 +1116,8 @@ async def imu_loop():
     last_send = 0.0
     was_recording = False
     last_session_reps = 0
+    detected_lift_label = None
+    detected_lift_conf = 0.0
 
     consecutive_failures = 0
     last_error_sent = 0.0
@@ -891,6 +1139,12 @@ async def imu_loop():
                 orientation.reset()
                 velocity_estimator.reset()
                 rom_estimator.reset()
+                lift_classifier.reset_stream()
+                lift_classifier.start_session()
+                detected_lift_label = None
+                detected_lift_conf = 0.0
+                LAST_DETECTED_LIFT = None
+                LAST_LIFT_CONFIDENCE = 0.0
 
                 RESET_REQUESTED = False
 
@@ -937,6 +1191,13 @@ async def imu_loop():
             mapped = STATE_MOVING if live_state == "MOVING" else STATE_WAITING
             ui_state = STATE_CALIBRATING if (time.time() - calib_start < calib_secs) else mapped
 
+            infer_out = lift_classifier.push_sample(ax, ay, az, gx, gy, gz)
+            if infer_out is not None:
+                detected_lift_label = infer_out["label"]
+                detected_lift_conf = infer_out["confidence"]
+                LAST_DETECTED_LIFT = detected_lift_label
+                LAST_LIFT_CONFIDENCE = float(detected_lift_conf)
+
             # 4. Determine if bar is stable (for ZUPT)
             is_stable = (ui_state == STATE_WAITING)
 
@@ -964,6 +1225,11 @@ async def imu_loop():
                 # Reset ML pipeline for new session
                 velocity_estimator.reset()
                 rom_estimator.reset()
+                lift_classifier.start_session()
+                detected_lift_label = None
+                detected_lift_conf = 0.0
+                LAST_DETECTED_LIFT = None
+                LAST_LIFT_CONFIDENCE = 0.0
 
             was_recording = session.active
 
@@ -1062,6 +1328,8 @@ async def imu_loop():
                     "velocity_loss_pct": compute_loss_pct(session.velocity_per_rep),
                     "avg_rom_m": None if avg_rom is None else round(float(avg_rom), 3),
                     "rom_loss_pct": compute_loss_pct(session.rom_per_rep),
+                    "detected_lift": detected_lift_label,
+                    "lift_confidence": round(float(detected_lift_conf), 3),
                 }
 
                 LAST_STATUS = dict(payload)
@@ -1088,6 +1356,7 @@ async def main():
     print(f"LiftIQ Server v9 (with ML Pipeline)")
     print(f"WebSocket: ws://{HOST}:{PORT}")
     print(f"Sample rate: {SAMPLE_RATE_HZ} Hz")
+    print(f"TFLite lift inference requested: {ENABLE_TFLITE_INFERENCE}")
     
     server = await websockets.serve(
         handle_client, HOST, PORT,

@@ -1,0 +1,36 @@
+{
+  "model_format": "tflite",
+  "input_shape": [
+    1,
+    250,
+    6
+  ],
+  "output_shape": [
+    1,
+    21
+  ],
+  "num_classes": 0,
+  "labels": [],
+  "label_to_idx": {},
+  "sample_rate_hz": 100,
+  "window_sec": 2.5,
+  "window_samples": 250,
+  "norm_mean": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "norm_std": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "confidence_threshold": 0.6,
+  "inference_time_ms": 0.38240999965637457
+}
