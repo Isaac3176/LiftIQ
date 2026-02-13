@@ -1,14 +1,14 @@
 # LiftIQ
 
-**Your barbell, smarter.**
+### Your barbell, smarter.
 
-A smart weightlifting system that combines a Raspberry Pi + IMU hardware stack with a React Native app for real-time tracking, rep detection, and session analytics.
+A smart weightlifting assistant that turns raw IMU motion data into real-time training feedback on your phone.
 
 ![Version](https://img.shields.io/badge/version-MVP-blue)
-![Platform](https://img.shields.io/badge/platform-React%20Native%20%7C%20Raspberry%20Pi-2ea44f)
-![License](https://img.shields.io/badge/license-MIT-lightgrey)
+![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%2B%20React%20Native-2ea44f)
+![Status](https://img.shields.io/badge/status-active%20development-orange)
 
-> Note: Raspberry Pi + Android is the primary tested setup today. iOS/web support depends on your local Expo environment and network setup.
+> Note: Raspberry Pi + Android is the primary tested setup today. iOS and web support depend on local Expo/network setup.
 
 <p align="center">
   <img src="src/images/raspberry_pi.png" alt="Raspberry Pi setup" width="420"/>
@@ -16,20 +16,20 @@ A smart weightlifting system that combines a Raspberry Pi + IMU hardware stack w
 
 ## Why LiftIQ?
 
-- Local-first by default: sensor processing and workout flow run on your own hardware.
-- Real hardware signal pipeline: not just app simulation.
-- BYOH (Bring Your Own Hardware): Raspberry Pi + IMU + phone.
-- Lightweight workflow: connect, start session, lift, review summary.
-- Built for expansion: velocity metrics, ROM, ML classification, and form analysis.
+- Local-first: workout processing runs on your own hardware.
+- Real sensor pipeline: captures real barbell motion, not simulated input.
+- No subscription model: bring your own hardware and APIs.
+- Lightweight workflow: connect, start session, lift, review.
+- Built to scale: velocity, ROM, lift classification, and form analytics.
 
 ## Features
 
-- Real-time IMU capture from barbell-mounted 9-DoF sensor
-- Live WebSocket streaming from Raspberry Pi to mobile app
-- Session start/stop controls
-- Real-time rep counting pipeline
-- Workout summary metrics and export support
-- ML scripts for preprocessing, classifier training, and TFLite export
+- Real-time IMU capture from a barbell-mounted 9-DoF sensor
+- WebSocket streaming from Raspberry Pi to mobile app
+- Start/stop workout sessions with live rep updates
+- Rep counting and session-level workout summaries
+- Export-ready data path for analysis and iteration
+- Offline ML workflow for preprocessing, training, and TFLite export
 
 ## Hardware
 
@@ -37,45 +37,45 @@ A smart weightlifting system that combines a Raspberry Pi + IMU hardware stack w
   <img src="src/images/icm20948.webp" alt="ICM-20948 IMU" width="320"/>
 </p>
 
-### Current setup
+Current setup:
 
-- Raspberry Pi (sensor polling + network transport)
+- Raspberry Pi (sensor polling and transport)
 - SparkFun ICM-20948 IMU (accelerometer, gyroscope, magnetometer)
-- Power bank for portable runs
-- Barbell mount (MVP-grade mounting)
+- Power bank for portability
+- Barbell mount (MVP rig)
 
-### Placement notes
+Placement guidance:
 
-- Mount IMU rigidly on the barbell shaft.
-- Keep the Raspberry Pi off-bar to reduce vibration and improve reliability.
+- Mount the IMU rigidly on the barbell shaft.
+- Keep Raspberry Pi off-bar to reduce vibration noise.
 
-## Project Structure
+## Architecture
 
-- `src/` React Native (Expo) mobile app
-- `raspi_files/` Raspberry Pi sensor + WebSocket server code
-- `ml/` data preprocessing, training, evaluation, and model export scripts
+- `src/` React Native (Expo) app UI and workout flow
+- `raspi_files/` Raspberry Pi sensor + WebSocket server
+- `ml/` preprocessing, model training, reports, and export scripts
 
 ## Quick Start
 
-### Mobile app
+Mobile app:
 
 ```bash
 npm install
 npm run start
 ```
 
-### Raspberry Pi server
+Pi server:
 
 ```bash
 cd raspi_files
 python ws_server.py
 ```
 
-Default endpoint:
+Default WebSocket endpoint:
 
 - `ws://<pi-ip>:8765`
 
-## ML Workflow
+## ML Pipeline
 
 From repo root:
 
@@ -85,19 +85,15 @@ python ml/scripts/train_classifier.py
 python ml/scripts/export_tflite.py
 ```
 
-Generated artifacts are stored in:
+Outputs:
 
 - `ml/models/`
 - `ml/reports/`
 
 ## Roadmap
 
-- Improve rep detection robustness across lift types
-- Add stronger velocity and ROM metrics
-- Expand exercise classification quality and confidence handling
-- Improve session trends and long-term analytics UI
-- Evaluate BLE transport as an alternative to Wi-Fi
-
-## Status
-
-LiftIQ is actively evolving from an MVP into a more complete training assistant, with priority on correctness, reliability, and real-world usability before feature expansion.
+- Improve rep detection stability across more lift patterns
+- Strengthen velocity and ROM metric accuracy
+- Expand classifier quality and confidence handling
+- Improve session trends and analytics UX
+- Evaluate BLE as an alternative to Wi-Fi transport
