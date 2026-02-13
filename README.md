@@ -1,117 +1,103 @@
-# LiftIQ — Smart Weightlifting Assistant (MVP)
+# LiftIQ
+
+**Your barbell, smarter.**
+
+A smart weightlifting system that combines a Raspberry Pi + IMU hardware stack with a React Native app for real-time tracking, rep detection, and session analytics.
+
+![Version](https://img.shields.io/badge/version-MVP-blue)
+![Platform](https://img.shields.io/badge/platform-React%20Native%20%7C%20Raspberry%20Pi-2ea44f)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
+
+> Note: Raspberry Pi + Android is the primary tested setup today. iOS/web support depends on your local Expo environment and network setup.
 
 <p align="center">
-  <img src="src/images/raspberry_pi.png" alt="Raspberry Pi" width="420"/>
+  <img src="src/images/raspberry_pi.png" alt="Raspberry Pi setup" width="420"/>
 </p>
 
-**LiftIQ** is a hardware–software system that tracks barbell movement in real time using a low-cost inertial measurement unit (IMU) and a mobile app. The project explores how embedded systems, wireless communication, and on-device analytics can be combined to deliver meaningful feedback during strength training.
+## Why LiftIQ?
 
-This repository contains a **working MVP** focused on reliable data capture and real-time streaming from the barbell to a phone. Advanced features such as velocity analysis, ML-based rep detection, and form evaluation are planned next.
+- Local-first by default: sensor processing and workout flow run on your own hardware.
+- Real hardware signal pipeline: not just app simulation.
+- BYOH (Bring Your Own Hardware): Raspberry Pi + IMU + phone.
+- Lightweight workflow: connect, start session, lift, review summary.
+- Built for expansion: velocity metrics, ROM, ML classification, and form analysis.
 
----
+## Features
 
-## What the MVP Does
+- Real-time IMU capture from barbell-mounted 9-DoF sensor
+- Live WebSocket streaming from Raspberry Pi to mobile app
+- Session start/stop controls
+- Real-time rep counting pipeline
+- Workout summary metrics and export support
+- ML scripts for preprocessing, classifier training, and TFLite export
 
-The current MVP proves the **full end-to-end pipeline**:
-
-- Reads real motion data from a **9-DoF IMU** mounted on a barbell  
-- Streams IMU data wirelessly from a **Raspberry Pi** to a phone  
-- Displays live sensor data in a **React Native** mobile app  
-- Performs **basic real-time rep counting** using signal processing (no ML yet)  
-- Supports **start / stop workout sessions**
-
-> At this stage, the focus is **correctness, stability, and low latency**, not advanced modeling.
-
----
-
-## Hardware Setup (Current)
+## Hardware
 
 <p align="center">
-  <img src="src/images/icm20948.webp" alt="ICM-20948 IMU" width="360"/>
+  <img src="src/images/icm20948.webp" alt="ICM-20948 IMU" width="320"/>
 </p>
 
-### Components
-- **Raspberry Pi** — portable compute and networking  
-- **SparkFun ICM-20948 9-DoF IMU**  
-  - Accelerometer  
-  - Gyroscope  
-  - Magnetometer  
-- **Power bank** for mobile use  
-- **Barbell mount** (Velcro / zip-tie based for MVP)
+### Current setup
 
-### Placement
-- The **IMU** is rigidly mounted on the barbell shaft to capture true bar motion  
-- The **Raspberry Pi** is kept off the bar (pocket, belt pouch, or rack-mounted) to reduce vibration, noise, and risk  
+- Raspberry Pi (sensor polling + network transport)
+- SparkFun ICM-20948 IMU (accelerometer, gyroscope, magnetometer)
+- Power bank for portable runs
+- Barbell mount (MVP-grade mounting)
 
----
+### Placement notes
 
-## Software Architecture (MVP)
+- Mount IMU rigidly on the barbell shaft.
+- Keep the Raspberry Pi off-bar to reduce vibration and improve reliability.
 
+## Project Structure
 
-- The **Raspberry Pi** handles sensor polling and data streaming  
-- The **mobile app** handles visualization and workout logic  
-- All processing runs **locally** — no cloud dependency in the MVP  
+- `src/` React Native (Expo) mobile app
+- `raspi_files/` Raspberry Pi sensor + WebSocket server code
+- `ml/` data preprocessing, training, evaluation, and model export scripts
 
----
+## Quick Start
 
-## Tech Stack
+### Mobile app
 
-### Embedded / Hardware
-- Raspberry Pi OS  
-- Python  
-- I2C communication  
-- SparkFun ICM-20948 driver  
+```bash
+npm install
+npm run start
+```
 
-### Mobile App
-- React Native (Expo)  
-- JavaScript  
-- WebSockets  
-- On-device processing only  
+### Raspberry Pi server
 
----
+```bash
+cd raspi_files
+python ws_server.py
+```
 
-## Why This Project
+Default endpoint:
 
-Most student fitness projects are software-only. **LiftIQ is intentionally a systems project**, designed to deal with real-world constraints:
+- `ws://<pi-ip>:8765`
 
-- Sensor noise and drift  
-- Embedded data pipelines  
-- Wireless communication latency  
-- Mobile UX under real-time data load  
+## ML Workflow
 
-The long-term vision includes:
-- Velocity-based training metrics  
-- Automatic exercise classification  
-- On-device ML for rep detection and form scoring  
-- 3D visualization of bar path  
+From repo root:
 
-None of that matters unless the fundamentals work first — **this MVP is about getting those fundamentals right**.
+```bash
+python ml/scripts/preprocess_recgym.py
+python ml/scripts/train_classifier.py
+python ml/scripts/export_tflite.py
+```
 
----
+Generated artifacts are stored in:
 
-## Current Status
+- `ml/models/`
+- `ml/reports/`
 
-- ✅ MVP complete and functional  
-- ✅ Live IMU data streaming to phone  
-- ✅ Basic rep counting implemented  
-- 🔄 Actively iterating on stability and data quality  
+## Roadmap
 
----
+- Improve rep detection robustness across lift types
+- Add stronger velocity and ROM metrics
+- Expand exercise classification quality and confidence handling
+- Improve session trends and long-term analytics UI
+- Evaluate BLE transport as an alternative to Wi-Fi
 
-## Planned Next Steps
+## Status
 
-- Replace heuristic rep counting with **ML-based detection**  
-- Add **bar velocity** and range-of-motion estimation  
-- Transition from Wi-Fi to **Bluetooth Low Energy (BLE)**  
-- Add session summaries and performance trends  
-- Explore **real-time form feedback**  
-
----
-
-## Notes
-
-This project is being developed incrementally, with an emphasis on **correctness, debuggability, and real-world constraints** rather than rushing features. Each phase builds directly on a working system.
-
----
-
-*LiftIQ is an ongoing exploration of embedded sensing, mobile systems, and applied machine learning in a real training environment.*
+LiftIQ is actively evolving from an MVP into a more complete training assistant, with priority on correctness, reliability, and real-world usability before feature expansion.
