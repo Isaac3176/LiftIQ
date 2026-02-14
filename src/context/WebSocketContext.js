@@ -2,6 +2,17 @@
 import React, { createContext, useContext, useState, useRef } from 'react';
 
 const WebSocketContext = createContext(null);
+const AUTO_LIFT_CONFIDENCE_MIN = 0.55;
+const AUTO_LIFT_STABLE_HITS = 3;
+const AUTO_LIFT_HOLD_MS = 2500;
+
+const DEFAULT_DETECTED_LIFT = {
+  label: null,
+  confidence: 0,
+  isActive: false,
+  isManual: false,
+  status: 'idle',
+};
 
 export function WebSocketProvider({ children }) {
   const [websocket, setWebsocket] = useState(null);
@@ -16,16 +27,95 @@ export function WebSocketProvider({ children }) {
   const [currentSessionSummary, setCurrentSessionSummary] = useState(null);
   
   // Detected lift classification (Model 3)
-  const [detectedLift, setDetectedLift] = useState({
-    label: null,
-    confidence: 0,
-    isActive: false,
-  });
+  const [detectedLift, setDetectedLift] = useState(DEFAULT_DETECTED_LIFT);
   
   // Pi IP address (for exports, etc)
   const [piIp, setPiIp] = useState(null);
   
   const wsRef = useRef(null);
+  const manualLiftRef = useRef(null);
+  const autoLiftRef = useRef({
+    candidate: null,
+    candidateHits: 0,
+    stableLabel: null,
+    stableConfidence: 0,
+    stableAt: 0,
+  });
+
+  const resetAutoLift = () => {
+    autoLiftRef.current = {
+      candidate: null,
+      candidateHits: 0,
+      stableLabel: null,
+      stableConfidence: 0,
+      stableAt: 0,
+    };
+  };
+
+  const normalizeLiftLabel = (value) => {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.toLowerCase() === 'unknown') return null;
+    return trimmed;
+  };
+
+  const handleAutoDetectedLift = (rawLabel, rawConfidence) => {
+    if (manualLiftRef.current) {
+      return;
+    }
+
+    const label = normalizeLiftLabel(rawLabel);
+    const confidence = Number(rawConfidence) || 0;
+    const now = Date.now();
+    const tracker = autoLiftRef.current;
+    const hasStrongSignal = label && confidence >= AUTO_LIFT_CONFIDENCE_MIN;
+
+    if (hasStrongSignal) {
+      if (tracker.candidate === label) {
+        tracker.candidateHits += 1;
+      } else {
+        tracker.candidate = label;
+        tracker.candidateHits = 1;
+      }
+
+      if (tracker.candidateHits >= AUTO_LIFT_STABLE_HITS) {
+        tracker.stableLabel = label;
+        tracker.stableConfidence = confidence;
+        tracker.stableAt = now;
+        setDetectedLift({
+          label,
+          confidence,
+          isActive: true,
+          isManual: false,
+          status: 'stable',
+        });
+        return;
+      }
+
+      setDetectedLift((prev) => ({
+        label: tracker.stableLabel || prev.label || label,
+        confidence,
+        isActive: Boolean(tracker.stableLabel),
+        isManual: false,
+        status: tracker.stableLabel ? 'stable' : 'detecting',
+      }));
+      return;
+    }
+
+    if (tracker.stableLabel && now - tracker.stableAt < AUTO_LIFT_HOLD_MS) {
+      setDetectedLift({
+        label: tracker.stableLabel,
+        confidence: tracker.stableConfidence,
+        isActive: true,
+        isManual: false,
+        status: 'stable',
+      });
+      return;
+    }
+
+    resetAutoLift();
+    setDetectedLift(DEFAULT_DETECTED_LIFT);
+  };
 
   const handleMessage = (event) => {
     try {
@@ -86,11 +176,7 @@ export function WebSocketProvider({ children }) {
 
       // Handle detected lift classification (from server-side inference)
       if (data.detected_lift !== undefined) {
-        setDetectedLift({
-          label: data.detected_lift,
-          confidence: data.lift_confidence || 0,
-          isActive: data.detected_lift !== null && data.detected_lift !== 'unknown',
-        });
+        handleAutoDetectedLift(data.detected_lift, data.lift_confidence);
       }
 
       // Handle ACK messages
@@ -100,7 +186,10 @@ export function WebSocketProvider({ children }) {
           setIsRecording(true);
           setRepEvents([]);
           setCurrentSessionSummary(null);
-          setDetectedLift({ label: null, confidence: 0, isActive: false });
+          if (!manualLiftRef.current) {
+            resetAutoLift();
+            setDetectedLift(DEFAULT_DETECTED_LIFT);
+          }
         } else if (data.action === 'stop') {
           setRepCount(data.reps !== undefined ? data.reps : repCount);
           setIsRecording(false);
@@ -145,7 +234,9 @@ export function WebSocketProvider({ children }) {
       setCurrentState('WAITING');
       setIsRecording(false);
       setGyroFilt(0);
-      setDetectedLift({ label: null, confidence: 0, isActive: false });
+      manualLiftRef.current = null;
+      resetAutoLift();
+      setDetectedLift(DEFAULT_DETECTED_LIFT);
     }
   };
 
@@ -165,7 +256,10 @@ export function WebSocketProvider({ children }) {
       setRepEvents([]);
       setCurrentSessionSummary(null);
       setLastRepEvent(null);
-      setDetectedLift({ label: null, confidence: 0, isActive: false });
+      if (!manualLiftRef.current) {
+        resetAutoLift();
+        setDetectedLift(DEFAULT_DETECTED_LIFT);
+      }
     }
   };
 
@@ -178,11 +272,22 @@ export function WebSocketProvider({ children }) {
 
   // Manual lift selection (override ML detection)
   const setManualLift = (label) => {
+    const normalizedLabel = normalizeLiftLabel(label);
+
+    if (!normalizedLabel) {
+      manualLiftRef.current = null;
+      resetAutoLift();
+      setDetectedLift(DEFAULT_DETECTED_LIFT);
+      return;
+    }
+
+    manualLiftRef.current = normalizedLabel;
     setDetectedLift({
-      label: label,
-      confidence: 1.0,
+      label: normalizedLabel,
+      confidence: 1,
       isActive: true,
       isManual: true,
+      status: 'manual',
     });
   };
 
