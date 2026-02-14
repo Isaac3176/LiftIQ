@@ -22,6 +22,9 @@ export function WebSocketProvider({ children }) {
     isActive: false,
   });
   
+  // Pi IP address (for exports, etc)
+  const [piIp, setPiIp] = useState(null);
+  
   const wsRef = useRef(null);
 
   const handleMessage = (event) => {
@@ -195,6 +198,8 @@ export function WebSocketProvider({ children }) {
     lastRepEvent,
     currentSessionSummary,
     detectedLift,
+    piIp,
+    setPiIp,
     connect,
     disconnect,
     sendMessage,
