@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Switch, SafeAreaView, StatusBar } from 'react-native';
+import { theme } from '../theme/performanceLabTheme';
 
 export default function SettingsScreen({ onBack }) {
   const [autoDetect, setAutoDetect] = useState(true);
@@ -12,17 +13,16 @@ export default function SettingsScreen({ onBack }) {
       <StatusBar barStyle="light-content" />
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack}>
-          <Text style={styles.backButton}>←</Text>
+          <Text style={styles.backButton}>Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Settings</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Detection Settings */}
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🎯 Rep Detection</Text>
-          
+          <Text style={styles.sectionTitle}>Rep Detection</Text>
+
           <View style={styles.settingRow}>
             <View style={styles.settingInfo}>
               <Text style={styles.settingLabel}>Auto-detect Exercise</Text>
@@ -31,36 +31,15 @@ export default function SettingsScreen({ onBack }) {
             <Switch
               value={autoDetect}
               onValueChange={setAutoDetect}
-              trackColor={{ false: '#333', true: '#4CAF50' }}
-              thumbColor={autoDetect ? '#fff' : '#888'}
+              trackColor={{ false: theme.colors.surfaceAlt, true: theme.colors.accentSoft }}
+              thumbColor={autoDetect ? theme.colors.accent : theme.colors.textMuted}
             />
-          </View>
-
-          <View style={styles.settingRow}>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingLabel}>Peak Threshold</Text>
-              <Text style={styles.settingDesc}>12.0 m/s² (Default)</Text>
-            </View>
-            <TouchableOpacity style={styles.editButton}>
-              <Text style={styles.editButtonText}>Edit</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.settingRow}>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingLabel}>Valley Threshold</Text>
-              <Text style={styles.settingDesc}>9.5 m/s² (Default)</Text>
-            </View>
-            <TouchableOpacity style={styles.editButton}>
-              <Text style={styles.editButtonText}>Edit</Text>
-            </TouchableOpacity>
           </View>
         </View>
 
-        {/* Feedback Settings */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🔔 Feedback</Text>
-          
+          <Text style={styles.sectionTitle}>Feedback</Text>
+
           <View style={styles.settingRow}>
             <View style={styles.settingInfo}>
               <Text style={styles.settingLabel}>Sound Effects</Text>
@@ -69,89 +48,69 @@ export default function SettingsScreen({ onBack }) {
             <Switch
               value={soundEnabled}
               onValueChange={setSoundEnabled}
-              trackColor={{ false: '#333', true: '#4CAF50' }}
-              thumbColor={soundEnabled ? '#fff' : '#888'}
+              trackColor={{ false: theme.colors.surfaceAlt, true: theme.colors.accentSoft }}
+              thumbColor={soundEnabled ? theme.colors.accent : theme.colors.textMuted}
             />
           </View>
 
           <View style={styles.settingRow}>
             <View style={styles.settingInfo}>
               <Text style={styles.settingLabel}>Vibration</Text>
-              <Text style={styles.settingDesc}>Haptic feedback on reps</Text>
+              <Text style={styles.settingDesc}>Subtle haptic feedback on reps</Text>
             </View>
             <Switch
               value={vibration}
               onValueChange={setVibration}
-              trackColor={{ false: '#333', true: '#4CAF50' }}
-              thumbColor={vibration ? '#fff' : '#888'}
+              trackColor={{ false: theme.colors.surfaceAlt, true: theme.colors.accentSoft }}
+              thumbColor={vibration ? theme.colors.accent : theme.colors.textMuted}
             />
           </View>
 
           <View style={styles.settingRow}>
             <View style={styles.settingInfo}>
               <Text style={styles.settingLabel}>AI Coaching Cues</Text>
-              <Text style={styles.settingDesc}>Real-time form feedback</Text>
+              <Text style={styles.settingDesc}>Real-time performance prompts</Text>
             </View>
             <Switch
               value={coaching}
               onValueChange={setCoaching}
-              trackColor={{ false: '#333', true: '#4CAF50' }}
-              thumbColor={coaching ? '#fff' : '#888'}
+              trackColor={{ false: theme.colors.surfaceAlt, true: theme.colors.accentSoft }}
+              thumbColor={coaching ? theme.colors.accent : theme.colors.textMuted}
             />
           </View>
         </View>
 
-        {/* Connection Settings */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📡 Connection</Text>
-          
+          <Text style={styles.sectionTitle}>Connection</Text>
           <View style={styles.settingRow}>
             <View style={styles.settingInfo}>
-              <Text style={styles.settingLabel}>Raspberry Pi IP</Text>
+              <Text style={styles.settingLabel}>Raspberry Pi Endpoint</Text>
               <Text style={styles.settingDesc}>172.20.19.98:8765</Text>
             </View>
             <TouchableOpacity style={styles.editButton}>
               <Text style={styles.editButtonText}>Change</Text>
             </TouchableOpacity>
           </View>
-
-          <View style={styles.settingRow}>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingLabel}>Reconnect on Disconnect</Text>
-              <Text style={styles.settingDesc}>Auto-reconnect if connection drops</Text>
-            </View>
-            <Switch
-              value={true}
-              onValueChange={() => {}}
-              trackColor={{ false: '#333', true: '#4CAF50' }}
-              thumbColor={'#fff'}
-            />
-          </View>
         </View>
 
-        {/* Data Settings */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>💾 Data</Text>
-          
+          <Text style={styles.sectionTitle}>Data</Text>
           <TouchableOpacity style={styles.actionButton}>
             <Text style={styles.actionButtonText}>Export All Data</Text>
           </TouchableOpacity>
-
           <TouchableOpacity style={styles.actionButton}>
             <Text style={styles.actionButtonText}>Clear History</Text>
           </TouchableOpacity>
-
           <TouchableOpacity style={[styles.actionButton, styles.dangerButton]}>
             <Text style={[styles.actionButtonText, styles.dangerText]}>Reset All Settings</Text>
           </TouchableOpacity>
         </View>
 
-        {/* About */}
         <View style={styles.aboutSection}>
           <Text style={styles.aboutTitle}>LiftIQ</Text>
           <Text style={styles.aboutVersion}>Version 1.0.0</Text>
           <Text style={styles.aboutText}>
-            AI-powered weightlifting tracker with velocity-based training
+            Smart lifting assistant with velocity-based training and real-time analytics.
           </Text>
         </View>
       </ScrollView>
@@ -162,7 +121,7 @@ export default function SettingsScreen({ onBack }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: theme.colors.bg,
   },
   header: {
     flexDirection: 'row',
@@ -170,35 +129,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
+    borderBottomColor: theme.colors.border,
   },
   backButton: {
-    fontSize: 28,
-    color: '#fff',
+    fontSize: 14,
+    color: theme.colors.textSecondary,
+    fontWeight: '600',
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontSize: 22,
+    fontWeight: '700',
+    color: theme.colors.textPrimary,
   },
   scrollContent: {
     padding: 20,
   },
   section: {
-    marginBottom: 32,
+    marginBottom: 28,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 16,
+    fontSize: 13,
+    fontWeight: '600',
+    color: theme.colors.textSecondary,
+    marginBottom: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
   settingRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
     padding: 16,
     marginBottom: 12,
   },
@@ -208,41 +172,46 @@ const styles = StyleSheet.create({
   settingLabel: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#fff',
+    color: theme.colors.textPrimary,
     marginBottom: 4,
   },
   settingDesc: {
-    fontSize: 13,
-    color: '#888',
+    fontSize: 12,
+    color: theme.colors.textSecondary,
   },
   editButton: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    backgroundColor: '#2a2a2a',
+    backgroundColor: theme.colors.surfaceAlt,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
   editButtonText: {
-    fontSize: 14,
-    color: '#4CAF50',
+    fontSize: 13,
+    color: theme.colors.accent,
     fontWeight: '600',
   },
   actionButton: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
     padding: 16,
     alignItems: 'center',
     marginBottom: 12,
   },
   actionButtonText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    color: '#fff',
+    color: theme.colors.textPrimary,
   },
   dangerButton: {
-    backgroundColor: '#3a1a1a',
+    borderColor: 'rgba(255, 93, 115, 0.5)',
+    backgroundColor: 'rgba(255, 93, 115, 0.12)',
   },
   dangerText: {
-    color: '#ff4444',
+    color: theme.colors.danger,
   },
   aboutSection: {
     alignItems: 'center',
@@ -250,19 +219,21 @@ const styles = StyleSheet.create({
   },
   aboutTitle: {
     fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontWeight: '800',
+    color: theme.colors.textPrimary,
     marginBottom: 4,
   },
   aboutVersion: {
-    fontSize: 14,
-    color: '#888',
+    fontSize: 13,
+    color: theme.colors.textSecondary,
     marginBottom: 8,
   },
   aboutText: {
     fontSize: 13,
-    color: '#666',
+    color: theme.colors.textMuted,
     textAlign: 'center',
-    paddingHorizontal: 40,
+    paddingHorizontal: 30,
+    lineHeight: 20,
   },
 });
+

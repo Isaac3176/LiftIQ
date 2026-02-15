@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, StatusBar } from 'react-native';
 import { WebSocketProvider } from './src/context/WebSocketContext';
+import { theme } from './src/theme/performanceLabTheme';
 import ConnectScreen from './src/screens/ConnectScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
 import WorkoutScreen from './src/screens/WorkoutScreen';
@@ -49,7 +50,7 @@ function AppContent() {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0a0a0a" />
+      <StatusBar barStyle="light-content" backgroundColor={theme.colors.bg} />
       
       {currentScreen === 'connect' && (
         <ConnectScreen onConnected={handleConnected} />
@@ -118,6 +119,6 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: theme.colors.bg,
   },
 });

@@ -4,6 +4,7 @@ import Svg, { Line, Rect, Text as SvgText } from 'react-native-svg';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { useWebSocket } from '../context/WebSocketContext';
+import { theme } from '../theme/performanceLabTheme';
 
 export default function SessionSummaryScreen({ sessionData, onViewHistory, onBackToDashboard }) {
   const { 
@@ -93,10 +94,10 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
   };
 
   const getLossInfo = (lossPct, warnThreshold = 15, dangerThreshold = 25) => {
-    if (lossPct == null) return { level: 'Unknown', color: '#666' };
-    if (lossPct < warnThreshold * 0.66) return { level: 'Low', color: '#4CAF50' };
-    if (lossPct <= dangerThreshold) return { level: 'Moderate', color: '#FFC107' };
-    return { level: 'High', color: '#ff4444' };
+    if (lossPct == null) return { level: 'Unknown', color: theme.colors.textMuted };
+    if (lossPct < warnThreshold * 0.66) return { level: 'Low', color: theme.colors.success };
+    if (lossPct <= dangerThreshold) return { level: 'Moderate', color: theme.colors.warning };
+    return { level: 'High', color: theme.colors.danger };
   };
 
   const fatigueInfo = getLossInfo(outputLossPct);
@@ -146,16 +147,16 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
             const x = leftPadding + spacing + i * (barWidth + spacing);
             const y = chartHeight - bottomPadding - barHeight;
             const decline = velocities[0] > 0 ? ((velocities[0] - val) / velocities[0]) * 100 : 0;
-            const color = decline > 25 ? '#ff4444' : decline > 15 ? '#FFC107' : '#4CAF50';
+            const color = decline > 25 ? theme.colors.danger : decline > 15 ? theme.colors.warning : theme.colors.success;
             return (
               <React.Fragment key={i}>
                 <Rect x={x} y={y} width={barWidth} height={barHeight} fill={color} rx={2} />
-                <SvgText x={x + barWidth/2} y={chartHeight - 5} fontSize="9" fill="#555" textAnchor="middle">{i + 1}</SvgText>
+                <SvgText x={x + barWidth/2} y={chartHeight - 5} fontSize="9" fill={theme.colors.textMuted} textAnchor="middle">{i + 1}</SvgText>
               </React.Fragment>
             );
           })}
-          <SvgText x={leftPadding - 5} y={15} fontSize="9" fill="#555" textAnchor="end">{maxVal.toFixed(2)}</SvgText>
-          <SvgText x={leftPadding - 5} y={chartHeight - bottomPadding - 2} fontSize="9" fill="#555" textAnchor="end">{minVal.toFixed(2)}</SvgText>
+          <SvgText x={leftPadding - 5} y={15} fontSize="9" fill={theme.colors.textMuted} textAnchor="end">{maxVal.toFixed(2)}</SvgText>
+          <SvgText x={leftPadding - 5} y={chartHeight - bottomPadding - 2} fontSize="9" fill={theme.colors.textMuted} textAnchor="end">{minVal.toFixed(2)}</SvgText>
         </Svg>
         <Text style={styles.chartUnit}>m/s</Text>
       </View>
@@ -185,16 +186,16 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
             const x = leftPadding + spacing + i * (barWidth + spacing);
             const y = chartHeight - bottomPadding - barHeight;
             const decline = roms[0] > 0 ? ((roms[0] - val) / roms[0]) * 100 : 0;
-            const color = decline > 20 ? '#ff4444' : decline > 10 ? '#FFC107' : '#4CAF50';
+            const color = decline > 20 ? theme.colors.danger : decline > 10 ? theme.colors.warning : theme.colors.success;
             return (
               <React.Fragment key={i}>
                 <Rect x={x} y={y} width={barWidth} height={barHeight} fill={color} rx={2} />
-                <SvgText x={x + barWidth/2} y={chartHeight - 5} fontSize="9" fill="#555" textAnchor="middle">{i + 1}</SvgText>
+                <SvgText x={x + barWidth/2} y={chartHeight - 5} fontSize="9" fill={theme.colors.textMuted} textAnchor="middle">{i + 1}</SvgText>
               </React.Fragment>
             );
           })}
-          <SvgText x={leftPadding - 5} y={15} fontSize="9" fill="#555" textAnchor="end">{maxVal.toFixed(0)}</SvgText>
-          <SvgText x={leftPadding - 5} y={chartHeight - bottomPadding - 2} fontSize="9" fill="#555" textAnchor="end">{minVal.toFixed(0)}</SvgText>
+          <SvgText x={leftPadding - 5} y={15} fontSize="9" fill={theme.colors.textMuted} textAnchor="end">{maxVal.toFixed(0)}</SvgText>
+          <SvgText x={leftPadding - 5} y={chartHeight - bottomPadding - 2} fontSize="9" fill={theme.colors.textMuted} textAnchor="end">{minVal.toFixed(0)}</SvgText>
         </Svg>
         <Text style={styles.chartUnit}>cm</Text>
       </View>
@@ -330,12 +331,12 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
             <View style={styles.tempoStatsCard}>
               <View style={styles.tempoStatItem}>
                 <Text style={styles.tempoStatLabel}>Fastest</Text>
-                <Text style={[styles.tempoStatValue, { color: '#4CAF50' }]}>{formatValue(minTempo, 2, 's')}</Text>
+                <Text style={[styles.tempoStatValue, { color: theme.colors.success }]}>{formatValue(minTempo, 2, 's')}</Text>
               </View>
               <View style={styles.tempoStatDivider} />
               <View style={styles.tempoStatItem}>
                 <Text style={styles.tempoStatLabel}>Slowest</Text>
-                <Text style={[styles.tempoStatValue, { color: '#FFC107' }]}>{formatValue(maxTempo, 2, 's')}</Text>
+                <Text style={[styles.tempoStatValue, { color: theme.colors.warning }]}>{formatValue(maxTempo, 2, 's')}</Text>
               </View>
               <View style={styles.tempoStatDivider} />
               <View style={styles.tempoStatItem}>
@@ -367,8 +368,8 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
                       <Text style={[styles.repDataValue, isFastest && styles.fastestText, isSlowest && styles.slowestText]}>
                         {formatValue(rep.tempoSec, 2, 's')}
                       </Text>
-                      {isFastest && <View style={[styles.repIndicator, { backgroundColor: '#4CAF50' }]} />}
-                      {isSlowest && <View style={[styles.repIndicator, { backgroundColor: '#FFC107' }]} />}
+                      {isFastest && <View style={[styles.repIndicator, { backgroundColor: theme.colors.success }]} />}
+                      {isSlowest && <View style={[styles.repIndicator, { backgroundColor: theme.colors.warning }]} />}
                     </View>
                     {hasVelocityData && (
                       <Text style={styles.repDataCellText}>{formatValue(rep.peakVelocityMs, 2)}</Text>
@@ -425,35 +426,35 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a0a0a' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, paddingTop: 10, borderBottomWidth: 1, borderBottomColor: '#1a1a1a' },
-  backButton: { fontSize: 32, color: '#fff', fontWeight: '300' },
-  headerTitle: { fontSize: 18, fontWeight: '600', color: '#fff' },
+  container: { flex: 1, backgroundColor: theme.colors.bg },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, paddingTop: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  backButton: { fontSize: 32, color: theme.colors.textSecondary, fontWeight: '300' },
+  headerTitle: { fontSize: 18, fontWeight: '700', color: theme.colors.textPrimary },
   scrollContent: { padding: 20 },
-  mainStatsCard: { backgroundColor: '#111', borderRadius: 16, padding: 24, marginBottom: 16, borderWidth: 1, borderColor: '#1a1a1a' },
+  mainStatsCard: { backgroundColor: theme.colors.surface, borderRadius: 16, padding: 24, marginBottom: 16, borderWidth: 1, borderColor: theme.colors.border },
   statRow: { flexDirection: 'row', alignItems: 'center' },
   mainStat: { flex: 1, alignItems: 'center' },
-  mainStatValue: { fontSize: 28, fontWeight: '700', color: '#fff' },
-  mainStatLabel: { fontSize: 10, color: '#666', letterSpacing: 1, marginTop: 4 },
+  mainStatValue: { fontSize: 32, fontWeight: '800', color: theme.colors.accent },
+  mainStatLabel: { fontSize: 10, color: theme.colors.textMuted, letterSpacing: 1, marginTop: 4 },
   divider: { width: 1, height: 40, backgroundColor: '#222' },
-  exportButton: { backgroundColor: '#2563eb', borderRadius: 12, padding: 16, marginBottom: 8, alignItems: 'center' },
+  exportButton: { backgroundColor: theme.colors.accent, borderRadius: 12, padding: 16, marginBottom: 8, alignItems: 'center' },
   exportButtonDisabled: { backgroundColor: '#1e3a5f' },
   exportButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  exportButtonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  exportButtonText: { color: theme.colors.onAccent, fontSize: 15, fontWeight: '700' },
   errorBanner: { backgroundColor: 'rgba(255, 68, 68, 0.1)', borderRadius: 8, padding: 12, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255, 68, 68, 0.3)' },
   errorBannerText: { color: '#ff6666', fontSize: 13, textAlign: 'center' },
   section: { marginBottom: 24 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 },
-  sectionTitle: { fontSize: 14, fontWeight: '600', color: '#888', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 },
-  sectionNote: { fontSize: 10, color: '#555' },
+  sectionTitle: { fontSize: 14, fontWeight: '600', color: theme.colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 },
+  sectionNote: { fontSize: 10, color: theme.colors.textMuted },
   metricsRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
-  metricBox: { flex: 1, backgroundColor: '#111', borderRadius: 12, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: '#1a1a1a' },
-  metricBoxLabel: { fontSize: 10, color: '#666', marginBottom: 4, textTransform: 'uppercase' },
-  metricBoxValue: { fontSize: 20, fontWeight: '700', color: '#fff' },
-  metricBoxUnit: { fontSize: 10, color: '#555', marginTop: 2 },
-  chartCard: { backgroundColor: '#111', borderRadius: 12, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: '#1a1a1a' },
-  chartTitle: { fontSize: 12, color: '#666', marginBottom: 12 },
-  chartUnit: { fontSize: 10, color: '#555', marginTop: 4 },
+  metricBox: { flex: 1, backgroundColor: theme.colors.surface, borderRadius: 12, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border },
+  metricBoxLabel: { fontSize: 10, color: theme.colors.textMuted, marginBottom: 4, textTransform: 'uppercase' },
+  metricBoxValue: { fontSize: 20, fontWeight: '700', color: theme.colors.textPrimary },
+  metricBoxUnit: { fontSize: 10, color: theme.colors.textMuted, marginTop: 2 },
+  chartCard: { backgroundColor: theme.colors.surface, borderRadius: 12, padding: 16, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border },
+  chartTitle: { fontSize: 12, color: theme.colors.textMuted, marginBottom: 12 },
+  chartUnit: { fontSize: 10, color: theme.colors.textMuted, marginTop: 4 },
   tempoStatsCard: { flexDirection: 'row', backgroundColor: '#111', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: '#1a1a1a' },
   tempoStatItem: { flex: 1, alignItems: 'center' },
   tempoStatLabel: { fontSize: 10, color: '#666', marginBottom: 4, textTransform: 'uppercase' },
@@ -483,8 +484,8 @@ const styles = StyleSheet.create({
   sessionIdCard: { backgroundColor: '#111', borderRadius: 12, padding: 16, marginBottom: 16, alignItems: 'center', borderWidth: 1, borderColor: '#1a1a1a' },
   sessionIdLabel: { fontSize: 10, color: '#555', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
   sessionIdValue: { fontSize: 11, color: '#666', fontFamily: 'monospace' },
-  historyButton: { backgroundColor: '#1a1a1a', borderRadius: 12, padding: 16, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: '#222' },
-  historyButtonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  historyButton: { backgroundColor: theme.colors.surfaceAlt, borderRadius: 12, padding: 16, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: theme.colors.border },
+  historyButtonText: { color: theme.colors.textPrimary, fontSize: 15, fontWeight: '600' },
   backButton2: { backgroundColor: 'transparent', borderRadius: 12, padding: 16, alignItems: 'center' },
-  backButtonText: { color: '#666', fontSize: 15, fontWeight: '500' },
+  backButtonText: { color: theme.colors.textSecondary, fontSize: 15, fontWeight: '500' },
 });

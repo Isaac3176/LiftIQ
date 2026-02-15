@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import Svg, { Rect, Line, Polyline, Text as SvgText } from 'react-native-svg';
 import { useWebSocket } from '../context/WebSocketContext';
+import { theme } from '../theme/performanceLabTheme';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -138,7 +139,7 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
     if (selectedSessionRawLoading) {
       return (
         <View style={styles.chartLoading}>
-          <ActivityIndicator size="small" color="#4CAF50" />
+          <ActivityIndicator size="small" color={theme.colors.accent} />
           <Text style={styles.chartLoadingText}>Loading data...</Text>
         </View>
       );
@@ -211,7 +212,7 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
         <Polyline
           points={polylinePoints}
           fill="none"
-          stroke="#4CAF50"
+          stroke={theme.colors.accent}
           strokeWidth="1.5"
         />
       </Svg>
@@ -241,7 +242,7 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
 
           {selectedSessionLoading ? (
             <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#4CAF50" />
+              <ActivityIndicator size="large" color={theme.colors.accent} />
               <Text style={styles.loadingText}>Loading...</Text>
             </View>
           ) : selectedSessionSummary?.error ? (
@@ -299,7 +300,7 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
                   <View style={styles.tempoStatsCard}>
                     <View style={styles.tempoStatItem}>
                       <Text style={styles.tempoStatLabel}>Fastest</Text>
-                      <Text style={[styles.tempoStatValue, { color: '#4CAF50' }]}>
+                      <Text style={[styles.tempoStatValue, { color: theme.colors.success }]}>
                         {formatValue(tempoStats.fastest, 2, 's')}
                       </Text>
                     </View>
@@ -339,7 +340,7 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
                             ]}>
                               {tempo.toFixed(2)}s
                             </Text>
-                            {isFastest && <View style={[styles.repIndicator, { backgroundColor: '#4CAF50' }]} />}
+                            {isFastest && <View style={[styles.repIndicator, { backgroundColor: theme.colors.success }]} />}
                             {isSlowest && <View style={[styles.repIndicator, { backgroundColor: '#FFC107' }]} />}
                           </View>
                         </View>
@@ -397,8 +398,8 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
           <RefreshControl
             refreshing={refreshing || sessionsLoading}
             onRefresh={onRefresh}
-            tintColor="#4CAF50"
-            colors={['#4CAF50']}
+            tintColor={theme.colors.accent}
+            colors={[theme.colors.accent]}
           />
         }
       >
@@ -426,7 +427,7 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
 
         {sessionsLoading && sessions.length === 0 && (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#4CAF50" />
+            <ActivityIndicator size="large" color={theme.colors.accent} />
             <Text style={styles.loadingText}>Loading...</Text>
           </View>
         )}
@@ -512,7 +513,7 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: theme.colors.bg,
   },
   header: {
     flexDirection: 'row',
@@ -521,17 +522,17 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingTop: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
+    borderBottomColor: theme.colors.border,
   },
   backButton: {
     fontSize: 32,
-    color: '#fff',
+    color: theme.colors.textSecondary,
     fontWeight: '300',
   },
   headerTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#fff',
+    color: theme.colors.textPrimary,
   },
   scrollContent: {
     padding: 20,
@@ -550,13 +551,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   summaryCard: {
-    backgroundColor: '#111',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
     padding: 20,
     flexDirection: 'row',
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: '#1a1a1a',
+    borderColor: theme.colors.border,
   },
   summaryItem: {
     flex: 1,
@@ -569,7 +570,7 @@ const styles = StyleSheet.create({
   },
   summaryLabel: {
     fontSize: 10,
-    color: '#666',
+    color: theme.colors.textMuted,
     marginTop: 4,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -583,7 +584,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingText: {
-    color: '#666',
+    color: theme.colors.textMuted,
     marginTop: 16,
     fontSize: 14,
   },
@@ -598,18 +599,18 @@ const styles = StyleSheet.create({
   listTitle: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#666',
+    color: theme.colors.textMuted,
     marginBottom: 16,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   sessionCard: {
-    backgroundColor: '#111',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#1a1a1a',
+    borderColor: theme.colors.border,
   },
   sessionHeader: {
     flexDirection: 'row',
@@ -651,7 +652,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 12,
     borderTopWidth: 1,
-    borderColor: '#1a1a1a',
+    borderColor: theme.colors.border,
   },
   sessionStat: {
     flex: 1,
@@ -671,7 +672,7 @@ const styles = StyleSheet.create({
   sessionStatDivider: {
     width: 1,
     height: 24,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: theme.colors.surfaceAlt,
   },
   emptyState: {
     alignItems: 'center',
@@ -690,7 +691,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   refreshButton: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: theme.colors.accent,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
@@ -702,7 +703,7 @@ const styles = StyleSheet.create({
   // Modal styles
   modalContainer: {
     flex: 1,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: theme.colors.bg,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -710,11 +711,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
+    borderBottomColor: theme.colors.border,
   },
   modalBackButton: {
     fontSize: 16,
-    color: '#4CAF50',
+    color: theme.colors.accent,
     fontWeight: '500',
   },
   modalTitle: {
@@ -726,12 +727,12 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   detailStatsCard: {
-    backgroundColor: '#111',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
     padding: 20,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#1a1a1a',
+    borderColor: theme.colors.border,
   },
   detailStatRow: {
     flexDirection: 'row',
@@ -748,7 +749,7 @@ const styles = StyleSheet.create({
   },
   detailStatLabel: {
     fontSize: 9,
-    color: '#666',
+    color: theme.colors.textMuted,
     letterSpacing: 0.5,
     marginTop: 4,
   },
@@ -764,16 +765,16 @@ const styles = StyleSheet.create({
   },
   metricBox: {
     flex: 1,
-    backgroundColor: '#111',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#1a1a1a',
+    borderColor: theme.colors.border,
   },
   metricBoxLabel: {
     fontSize: 10,
-    color: '#666',
+    color: theme.colors.textMuted,
     marginBottom: 4,
     textTransform: 'uppercase',
   },
@@ -783,7 +784,7 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   successText: {
-    color: '#4CAF50',
+    color: theme.colors.success,
   },
   warningText: {
     color: '#FFC107',
@@ -797,24 +798,24 @@ const styles = StyleSheet.create({
   detailSectionTitle: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#666',
+    color: theme.colors.textMuted,
     marginBottom: 12,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   playbackChartCard: {
-    backgroundColor: '#111',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#1a1a1a',
+    borderColor: theme.colors.border,
   },
   chartLoading: {
     padding: 40,
     alignItems: 'center',
   },
   chartLoadingText: {
-    color: '#666',
+    color: theme.colors.textMuted,
     fontSize: 12,
     marginTop: 8,
   },
@@ -828,11 +829,11 @@ const styles = StyleSheet.create({
   },
   tempoStatsCard: {
     flexDirection: 'row',
-    backgroundColor: '#111',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#1a1a1a',
+    borderColor: theme.colors.border,
   },
   tempoStatItem: {
     flex: 1,
@@ -866,7 +867,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
+    borderBottomColor: theme.colors.border,
   },
   repBreakdownRep: {
     fontSize: 14,
@@ -882,7 +883,7 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   fastestText: {
-    color: '#4CAF50',
+    color: theme.colors.success,
   },
   slowestText: {
     color: '#FFC107',
@@ -894,22 +895,22 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   infoCard: {
-    backgroundColor: '#111',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#1a1a1a',
+    borderColor: theme.colors.border,
   },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
+    borderBottomColor: theme.colors.border,
   },
   infoLabel: {
     fontSize: 13,
-    color: '#666',
+    color: theme.colors.textMuted,
   },
   infoValue: {
     fontSize: 13,
