@@ -1,5 +1,4 @@
-// src/context/WebSocketContext.js
-import React, { createContext, useContext, useState, useRef } from 'react';
+import React, { createContext, useContext, useRef, useState } from 'react';
 
 const WebSocketContext = createContext(null);
 const AUTO_LIFT_CONFIDENCE_MIN = 0.55;
@@ -25,13 +24,19 @@ export function WebSocketProvider({ children }) {
   const [repEvents, setRepEvents] = useState([]);
   const [lastRepEvent, setLastRepEvent] = useState(null);
   const [currentSessionSummary, setCurrentSessionSummary] = useState(null);
-  
-  // Detected lift classification (Model 3)
+
   const [detectedLift, setDetectedLift] = useState(DEFAULT_DETECTED_LIFT);
-  
-  // Pi IP address (for exports, etc)
   const [piIp, setPiIp] = useState(null);
-  
+
+  const [sessionsList, setSessionsList] = useState(null);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [selectedSessionSummary, setSelectedSessionSummary] = useState(null);
+  const [selectedSessionLoading, setSelectedSessionLoading] = useState(false);
+  const [selectedSessionRawPoints, setSelectedSessionRawPoints] = useState(null);
+  const [selectedSessionRawLoading, setSelectedSessionRawLoading] = useState(false);
+  const [exportResult, setExportResult] = useState(null);
+  const [exportLoading, setExportLoading] = useState(false);
+
   const wsRef = useRef(null);
   const manualLiftRef = useRef(null);
   const autoLiftRef = useRef({
@@ -60,9 +65,7 @@ export function WebSocketProvider({ children }) {
   };
 
   const handleAutoDetectedLift = (rawLabel, rawConfidence) => {
-    if (manualLiftRef.current) {
-      return;
-    }
+    if (manualLiftRef.current) return;
 
     const label = normalizeLiftLabel(rawLabel);
     const confidence = Number(rawConfidence) || 0;
@@ -122,41 +125,67 @@ export function WebSocketProvider({ children }) {
       const data = JSON.parse(event.data);
       setLastMessage(data);
 
-      // Handle session_summary messages
       if (data.type === 'session_summary') {
         setCurrentSessionSummary({
           reps: data.reps,
           tutSec: data.tut_sec,
           avgTempoSec: data.avg_tempo_sec,
           repBreakdown: data.rep_breakdown || [],
-          // ML pipeline fields
           avgVelocityMs: data.avg_velocity_ms,
           velocityLossPct: data.velocity_loss_pct,
           avgRomM: data.avg_rom_m,
           romLossPct: data.rom_loss_pct,
           detectedLift: data.detected_lift,
           liftConfidence: data.lift_confidence,
-          receivedAt: Date.now()
+          sessionId: data.session_id || data.sid || null,
+          repTimesSec: data.rep_times_sec || [],
+          totalReps: data.reps,
+          outputLossPct: data.output_loss_pct,
+          avgPeakSpeedProxy: data.avg_peak_speed_proxy,
+          speedLossPct: data.speed_loss_pct,
+          receivedAt: Date.now(),
         });
         return;
       }
 
-      // Handle rep_event messages
+      if (data.type === 'sessions_list' || data.type === 'sessions') {
+        setSessionsList(data);
+        setSessionsLoading(false);
+        return;
+      }
+
+      if (data.type === 'session_detail') {
+        setSelectedSessionSummary(data);
+        setSelectedSessionLoading(false);
+        return;
+      }
+
+      if (data.type === 'session_raw') {
+        setSelectedSessionRawPoints(data);
+        setSelectedSessionRawLoading(false);
+        return;
+      }
+
+      if (data.type === 'export_result' || data.type === 'export_session') {
+        setExportResult(data);
+        setExportLoading(false);
+        return;
+      }
+
       if (data.type === 'rep_event') {
-        setRepEvents(prev => [...prev, {
+        const normalized = {
           rep: data.rep,
           timestamp: data.t,
           repTime: data.rep_time,
           confidence: data.confidence,
           peakGyro: data.peak_gyro,
-          // ML pipeline fields
           peakVelocityMs: data.peak_velocity_ms,
           meanConcentricVelocityMs: data.mean_concentric_velocity_ms,
           romM: data.rom_m,
           romCm: data.rom_cm,
-          receivedAt: Date.now()
-        }]);
-        
+          receivedAt: Date.now(),
+        };
+        setRepEvents((prev) => [...prev, normalized]);
         setLastRepEvent({
           rep: data.rep,
           time: data.rep_time,
@@ -165,21 +194,16 @@ export function WebSocketProvider({ children }) {
           peakVelocityMs: data.peak_velocity_ms,
           romCm: data.rom_cm,
         });
-        
         return;
       }
 
-      // Update core state from rep_update
       if (data.reps !== undefined) setRepCount(data.reps);
       if (data.state !== undefined) setCurrentState(data.state);
       if (data.gyro_filt !== undefined) setGyroFilt(data.gyro_filt);
-
-      // Handle detected lift classification (from server-side inference)
       if (data.detected_lift !== undefined) {
         handleAutoDetectedLift(data.detected_lift, data.lift_confidence);
       }
 
-      // Handle ACK messages
       if (data.type === 'ack') {
         if (data.action === 'start') {
           setRepCount(0);
@@ -195,20 +219,28 @@ export function WebSocketProvider({ children }) {
           setIsRecording(false);
         }
       }
-      
+
+      if (data.type === 'error') {
+        if (data.action === 'sessions') setSessionsLoading(false);
+        if (data.action === 'session_detail') setSelectedSessionLoading(false);
+        if (data.action === 'session_raw') setSelectedSessionRawLoading(false);
+        if (data.action === 'export_session') {
+          setExportLoading(false);
+          setExportResult({ ok: false, error: data.error || 'Export failed.' });
+        }
+      }
     } catch (error) {
       console.error('Failed to parse WebSocket message:', error);
     }
   };
 
-  const connect = (ws) => {
-    if (wsRef.current) {
-      return;
-    }
+  const connect = (ws, ipAddress) => {
+    if (wsRef.current) return;
 
     wsRef.current = ws;
     setWebsocket(ws);
     setConnectionStatus('connected');
+    if (ipAddress) setPiIp(ipAddress);
 
     ws.onmessage = handleMessage;
 
@@ -225,19 +257,22 @@ export function WebSocketProvider({ children }) {
   };
 
   const disconnect = () => {
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-      setWebsocket(null);
-      setConnectionStatus('disconnected');
-      setRepCount(0);
-      setCurrentState('WAITING');
-      setIsRecording(false);
-      setGyroFilt(0);
-      manualLiftRef.current = null;
-      resetAutoLift();
-      setDetectedLift(DEFAULT_DETECTED_LIFT);
-    }
+    if (!wsRef.current) return;
+    wsRef.current.close();
+    wsRef.current = null;
+    setWebsocket(null);
+    setConnectionStatus('disconnected');
+    setRepCount(0);
+    setCurrentState('WAITING');
+    setIsRecording(false);
+    setGyroFilt(0);
+    manualLiftRef.current = null;
+    resetAutoLift();
+    setDetectedLift(DEFAULT_DETECTED_LIFT);
+    setSessionsLoading(false);
+    setSelectedSessionLoading(false);
+    setSelectedSessionRawLoading(false);
+    setExportLoading(false);
   };
 
   const sendMessage = (message) => {
@@ -250,27 +285,23 @@ export function WebSocketProvider({ children }) {
 
   const startRecording = () => {
     const sent = sendMessage({ type: 'command', action: 'start' });
-    if (sent) {
-      setIsRecording(true);
-      setRepCount(0);
-      setRepEvents([]);
-      setCurrentSessionSummary(null);
-      setLastRepEvent(null);
-      if (!manualLiftRef.current) {
-        resetAutoLift();
-        setDetectedLift(DEFAULT_DETECTED_LIFT);
-      }
+    if (!sent) return;
+    setIsRecording(true);
+    setRepCount(0);
+    setRepEvents([]);
+    setCurrentSessionSummary(null);
+    setLastRepEvent(null);
+    if (!manualLiftRef.current) {
+      resetAutoLift();
+      setDetectedLift(DEFAULT_DETECTED_LIFT);
     }
   };
 
   const stopRecording = () => {
     const sent = sendMessage({ type: 'command', action: 'stop' });
-    if (sent) {
-      setIsRecording(false);
-    }
+    if (sent) setIsRecording(false);
   };
 
-  // Manual lift selection (override ML detection)
   const setManualLift = (label) => {
     const normalizedLabel = normalizeLiftLabel(label);
 
@@ -291,6 +322,83 @@ export function WebSocketProvider({ children }) {
     });
   };
 
+  const requestSessions = (limit = 30) => {
+    setSessionsLoading(true);
+    const sent = sendMessage({ type: 'command', action: 'sessions', limit });
+    if (!sent) {
+      setSessionsLoading(false);
+      setSessionsList({ sessions: [], count: 0, error: 'Not connected.' });
+    }
+  };
+
+  const requestSessionDetail = (sessionId) => {
+    if (!sessionId) return;
+    setSelectedSessionLoading(true);
+    const sent = sendMessage({ type: 'command', action: 'session_detail', session_id: sessionId });
+    if (!sent) {
+      setSelectedSessionLoading(false);
+      setSelectedSessionSummary({ error: 'Not connected.' });
+    }
+  };
+
+  const requestSessionRaw = (sessionId, maxPoints = 2000, downsample = 5) => {
+    if (!sessionId) return;
+    setSelectedSessionRawLoading(true);
+    const sent = sendMessage({
+      type: 'command',
+      action: 'session_raw',
+      session_id: sessionId,
+      max_points: maxPoints,
+      downsample,
+    });
+    if (!sent) {
+      setSelectedSessionRawLoading(false);
+      setSelectedSessionRawPoints({ points: [] });
+    }
+  };
+
+  const clearSelectedSession = () => {
+    setSelectedSessionSummary(null);
+    setSelectedSessionRawPoints(null);
+    setSelectedSessionLoading(false);
+    setSelectedSessionRawLoading(false);
+  };
+
+  const requestExportSession = (sessionId, timeoutMs = 8000) => {
+    if (!sessionId) return;
+    setExportLoading(true);
+    setExportResult(null);
+    const sent = sendMessage({
+      type: 'command',
+      action: 'export_session',
+      session_id: sessionId,
+      timeout_ms: timeoutMs,
+    });
+    if (!sent) {
+      setExportLoading(false);
+      setExportResult({ ok: false, error: 'Not connected.' });
+    }
+  };
+
+  const clearExportResult = () => {
+    setExportResult(null);
+  };
+
+  const buildExportUrl = (downloadUrlTemplate) => {
+    if (!downloadUrlTemplate) return null;
+    if (/^https?:\/\//i.test(downloadUrlTemplate)) return downloadUrlTemplate;
+    if (!piIp) return null;
+
+    const replaced = String(downloadUrlTemplate)
+      .replace('{pi_ip}', piIp)
+      .replace('{PI_IP}', piIp)
+      .replace('{{PI_IP}}', piIp);
+
+    if (/^https?:\/\//i.test(replaced)) return replaced;
+    const normalizedPath = replaced.startsWith('/') ? replaced : `/${replaced}`;
+    return `http://${piIp}:8766${normalizedPath}`;
+  };
+
   const value = {
     websocket,
     connectionStatus,
@@ -304,6 +412,15 @@ export function WebSocketProvider({ children }) {
     currentSessionSummary,
     detectedLift,
     piIp,
+    piIpAddress: piIp,
+    sessionsList,
+    sessionsLoading,
+    selectedSessionSummary,
+    selectedSessionLoading,
+    selectedSessionRawPoints,
+    selectedSessionRawLoading,
+    exportResult,
+    exportLoading,
     setPiIp,
     connect,
     disconnect,
@@ -311,13 +428,16 @@ export function WebSocketProvider({ children }) {
     startRecording,
     stopRecording,
     setManualLift,
+    requestSessions,
+    requestSessionDetail,
+    requestSessionRaw,
+    clearSelectedSession,
+    requestExportSession,
+    clearExportResult,
+    buildExportUrl,
   };
 
-  return (
-    <WebSocketContext.Provider value={value}>
-      {children}
-    </WebSocketContext.Provider>
-  );
+  return <WebSocketContext.Provider value={value}>{children}</WebSocketContext.Provider>;
 }
 
 export function useWebSocket() {
@@ -327,3 +447,4 @@ export function useWebSocket() {
   }
   return context;
 }
+
