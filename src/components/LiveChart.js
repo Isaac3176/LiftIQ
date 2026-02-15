@@ -10,6 +10,14 @@ const PADDING = 20;
 
 export default function LiveChart({ data }) {
   const chartAnim = useRef(new Animated.Value(0)).current;
+  const smoothData = useMemo(() => {
+    if (data.length <= 2) return data;
+    return data.map((value, index) => {
+      const previous = data[index - 1] ?? value;
+      const next = data[index + 1] ?? value;
+      return (previous + value + next) / 3;
+    });
+  }, [data]);
 
   useEffect(() => {
     Animated.timing(chartAnim, {
@@ -41,15 +49,6 @@ export default function LiveChart({ data }) {
   const minValue = Math.min(...data, 0);
   const maxValue = Math.max(...data, 15);
   const range = maxValue - minValue || 1;
-
-  const smoothData = useMemo(() => {
-    if (data.length <= 2) return data;
-    return data.map((value, index) => {
-      const previous = data[index - 1] ?? value;
-      const next = data[index + 1] ?? value;
-      return (previous + value + next) / 3;
-    });
-  }, [data]);
 
   const denominator = Math.max(1, smoothData.length - 1);
   const points = smoothData.map((value, index) => {

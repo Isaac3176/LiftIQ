@@ -227,8 +227,8 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
         )}
 
         <View style={styles.heroCard}>
-          <Text style={styles.heroLabel}>Velocity</Text>
-          <Text style={styles.heroValue}>{liveVelocity.toFixed(2)} m/s</Text>
+          <Text style={styles.heroLabel}>Reps</Text>
+          <Text style={styles.heroValue}>{repCount}</Text>
         </View>
 
         <View style={styles.graphShell}>
@@ -592,4 +592,3 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
-
