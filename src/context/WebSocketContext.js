@@ -24,6 +24,8 @@ export function WebSocketProvider({ children }) {
   const [repEvents, setRepEvents] = useState([]);
   const [lastRepEvent, setLastRepEvent] = useState(null);
   const [currentSessionSummary, setCurrentSessionSummary] = useState(null);
+  const [sessionWeight, setSessionWeight] = useState(null);
+  const [sessionWeightUnit, setSessionWeightUnit] = useState('lb');
 
   const [detectedLift, setDetectedLift] = useState(DEFAULT_DETECTED_LIFT);
   const [piIp, setPiIp] = useState(null);
@@ -410,6 +412,8 @@ export function WebSocketProvider({ children }) {
     repEvents,
     lastRepEvent,
     currentSessionSummary,
+    sessionWeight,
+    sessionWeightUnit,
     detectedLift,
     piIp,
     piIpAddress: piIp,
@@ -422,6 +426,8 @@ export function WebSocketProvider({ children }) {
     exportResult,
     exportLoading,
     setPiIp,
+    setSessionWeight,
+    setSessionWeightUnit,
     connect,
     disconnect,
     sendMessage,

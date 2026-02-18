@@ -9,6 +9,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   Vibration,
   View,
@@ -49,6 +50,8 @@ const COMMON_EXERCISES = [
   { code: 'SHC', name: 'Hamstring Curl' },
   { code: 'HT', name: 'Hip Thrust' },
 ];
+const COMMON_WEIGHTS_LB = [45, 95, 135, 185, 225, 275, 315, 365, 405];
+const COMMON_WEIGHTS_KG = [20, 40, 60, 80, 100, 120, 140, 160];
 
 function getExerciseName(code) {
   if (!code) return 'Auto Detect';
@@ -66,10 +69,14 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
     lastRepEvent,
     currentSessionSummary,
     detectedLift,
+    sessionWeight,
+    sessionWeightUnit,
     startRecording,
     stopRecording,
     disconnect,
     setManualLift,
+    setSessionWeight,
+    setSessionWeightUnit,
   } = useWebSocket();
 
   const [chartData, setChartData] = useState([]);
@@ -77,8 +84,18 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
   const [sessionSamples, setSessionSamples] = useState([]);
   const [showExercisePicker, setShowExercisePicker] = useState(false);
   const [wasRecording, setWasRecording] = useState(false);
+  const [weight, setWeight] = useState(sessionWeight);
+  const [weightUnit, setWeightUnit] = useState(sessionWeightUnit || 'lb');
   const startPulseAnim = useRef(new Animated.Value(1)).current;
   const prevRepCount = useRef(0);
+
+  useEffect(() => {
+    setSessionWeight(weight);
+  }, [weight, setSessionWeight]);
+
+  useEffect(() => {
+    setSessionWeightUnit(weightUnit);
+  }, [weightUnit, setSessionWeightUnit]);
 
   useEffect(() => {
     if (isRecording && !wasRecording) {
@@ -168,6 +185,9 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
         detectedLift: detectedLift.label,
         liftConfidence: detectedLift.confidence,
         exercise: getExerciseName(detectedLift.label),
+        weight,
+        weightUnit,
+        weightKg: typeof weight === 'number' ? (weightUnit === 'kg' ? weight : weight * 0.453592) : null,
       });
     }, 800);
   };
@@ -250,6 +270,13 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
           <Text style={styles.exerciseAction}>Change</Text>
         </Pressable>
 
+        <WeightInputCard
+          weight={weight}
+          setWeight={setWeight}
+          weightUnit={weightUnit}
+          setWeightUnit={setWeightUnit}
+        />
+
         <View style={styles.confidenceSection}>
           <View style={styles.confidenceHeader}>
             <Text style={styles.confidenceLabel}>Detection confidence</Text>
@@ -322,6 +349,89 @@ function MetricCard({ label, value }) {
       <Text style={styles.metricLabel}>{label}</Text>
       <Text style={styles.metricValue}>{value}</Text>
     </Pressable>
+  );
+}
+
+function WeightInputCard({ weight, setWeight, weightUnit, setWeightUnit }) {
+  const [showCustomModal, setShowCustomModal] = useState(false);
+  const [customValue, setCustomValue] = useState('');
+  const commonWeights = weightUnit === 'lb' ? COMMON_WEIGHTS_LB : COMMON_WEIGHTS_KG;
+
+  const applyUnit = (nextUnit) => {
+    if (nextUnit === weightUnit) return;
+    if (typeof weight === 'number' && Number.isFinite(weight)) {
+      const converted = nextUnit === 'kg' ? weight * 0.453592 : weight / 0.453592;
+      setWeight(Math.max(1, Math.round(converted)));
+    }
+    setWeightUnit(nextUnit);
+  };
+
+  const confirmCustomWeight = () => {
+    const val = parseFloat(customValue);
+    if (Number.isFinite(val) && val > 0) {
+      setWeight(val);
+    }
+    setShowCustomModal(false);
+    setCustomValue('');
+  };
+
+  return (
+    <View style={styles.weightCard}>
+      <View style={styles.weightCardHeader}>
+        <Text style={styles.weightCardLabel}>💪 Weight</Text>
+        <View style={styles.unitToggleContainer}>
+          <TouchableOpacity style={[styles.unitToggleButton, weightUnit === 'lb' && styles.unitToggleButtonActive]} onPress={() => applyUnit('lb')}>
+            <Text style={[styles.unitToggleText, weightUnit === 'lb' && styles.unitToggleTextActive]}>lb</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.unitToggleButton, weightUnit === 'kg' && styles.unitToggleButtonActive]} onPress={() => applyUnit('kg')}>
+            <Text style={[styles.unitToggleText, weightUnit === 'kg' && styles.unitToggleTextActive]}>kg</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.weightScrollContainer}>
+        {commonWeights.map((value) => {
+          const selected = weight === value;
+          return (
+            <TouchableOpacity key={`${weightUnit}-${value}`} style={[styles.weightButton, selected && styles.weightButtonSelected]} onPress={() => setWeight(value)}>
+              <Text style={styles.weightButtonText}>{value}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
+      <View style={styles.selectedWeightContainer}>
+        <Text style={styles.selectedWeightText}>{typeof weight === 'number' ? `${weight} ${weightUnit}` : 'No weight selected'}</Text>
+        <TouchableOpacity style={styles.customWeightButton} onPress={() => setShowCustomModal(true)}>
+          <Text style={styles.customWeightText}>Custom</Text>
+        </TouchableOpacity>
+      </View>
+
+      <Modal visible={showCustomModal} transparent animationType="fade" onRequestClose={() => setShowCustomModal(false)}>
+        <View style={styles.weightModalOverlay}>
+          <View style={styles.weightModalContent}>
+            <Text style={styles.weightModalTitle}>Enter Weight ({weightUnit})</Text>
+            <TextInput
+              style={styles.weightInput}
+              value={customValue}
+              onChangeText={setCustomValue}
+              keyboardType="decimal-pad"
+              placeholder="0"
+              placeholderTextColor="#666"
+              autoFocus
+            />
+            <View style={styles.weightModalButtonRow}>
+              <TouchableOpacity style={styles.weightModalCancelButton} onPress={() => setShowCustomModal(false)}>
+                <Text style={styles.weightModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.weightModalConfirmButton} onPress={confirmCustomWeight}>
+                <Text style={styles.weightModalConfirmText}>Set</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </View>
   );
 }
 
@@ -450,6 +560,143 @@ const styles = StyleSheet.create({
     color: theme.colors.accentActive,
     fontSize: 13,
     fontWeight: '600',
+  },
+  weightCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+  },
+  weightCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  weightCardLabel: {
+    fontSize: 12,
+    color: '#888',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  unitToggleContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#252525',
+    borderRadius: 8,
+    padding: 2,
+  },
+  unitToggleButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  unitToggleButtonActive: {
+    backgroundColor: '#4CAF50',
+  },
+  unitToggleText: {
+    fontSize: 12,
+    color: '#888',
+    fontWeight: '700',
+  },
+  unitToggleTextActive: {
+    color: '#fff',
+  },
+  weightScrollContainer: {
+    marginBottom: 12,
+  },
+  weightButton: {
+    backgroundColor: '#252525',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginRight: 8,
+    minWidth: 50,
+    alignItems: 'center',
+  },
+  weightButtonSelected: {
+    backgroundColor: '#4CAF50',
+    borderWidth: 0,
+  },
+  weightButtonText: {
+    fontSize: 16,
+    color: '#fff',
+    fontWeight: '700',
+  },
+  selectedWeightContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  selectedWeightText: {
+    fontSize: 18,
+    color: '#4CAF50',
+    fontWeight: '700',
+  },
+  customWeightButton: {
+    backgroundColor: '#252525',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  customWeightText: {
+    fontSize: 14,
+    color: '#888',
+  },
+  weightModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  weightModalContent: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 20,
+    padding: 24,
+    width: '80%',
+    maxWidth: 300,
+  },
+  weightModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  weightInput: {
+    backgroundColor: '#252525',
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 32,
+    color: '#fff',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  weightModalButtonRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  weightModalCancelButton: {
+    flex: 1,
+    backgroundColor: '#333',
+    borderRadius: 12,
+    padding: 14,
+    marginRight: 8,
+    alignItems: 'center',
+  },
+  weightModalConfirmButton: {
+    flex: 1,
+    backgroundColor: '#4CAF50',
+    borderRadius: 12,
+    padding: 14,
+    marginLeft: 8,
+    alignItems: 'center',
+  },
+  weightModalCancelText: {
+    color: '#fff',
+  },
+  weightModalConfirmText: {
+    color: '#fff',
+    fontWeight: '700',
   },
   confidenceSection: {
     backgroundColor: theme.colors.surface,
