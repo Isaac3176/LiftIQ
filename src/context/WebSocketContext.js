@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 
 const WebSocketContext = createContext(null);
 const AUTO_LIFT_CONFIDENCE_MIN = 0.55;
@@ -26,6 +26,9 @@ export function WebSocketProvider({ children }) {
   const [currentSessionSummary, setCurrentSessionSummary] = useState(null);
   const [sessionWeight, setSessionWeight] = useState(null);
   const [sessionWeightUnit, setSessionWeightUnit] = useState('lb');
+  const [currentSet, setCurrentSet] = useState(null);
+  const [isSetActive, setIsSetActive] = useState(false);
+  const [setHistory, setSetHistory] = useState([]);
 
   const [detectedLift, setDetectedLift] = useState(DEFAULT_DETECTED_LIFT);
   const [piIp, setPiIp] = useState(null);
@@ -40,6 +43,8 @@ export function WebSocketProvider({ children }) {
   const [exportLoading, setExportLoading] = useState(false);
 
   const wsRef = useRef(null);
+  const currentSetRef = useRef(null);
+  const isSetActiveRef = useRef(false);
   const manualLiftRef = useRef(null);
   const autoLiftRef = useRef({
     candidate: null,
@@ -64,6 +69,127 @@ export function WebSocketProvider({ children }) {
     const trimmed = value.trim();
     if (!trimmed || trimmed.toLowerCase() === 'unknown') return null;
     return trimmed;
+  };
+
+  useEffect(() => {
+    currentSetRef.current = currentSet;
+  }, [currentSet]);
+
+  useEffect(() => {
+    isSetActiveRef.current = isSetActive;
+  }, [isSetActive]);
+
+  const computeSetSummary = (set) => {
+    if (!set?.reps?.length) {
+      return { totalReps: 0, duration: 0 };
+    }
+
+    const reps = set.reps;
+    const n = reps.length;
+    const avgPeakV = reps.reduce((sum, rep) => sum + rep.peakV, 0) / n;
+    const avgMeanConV = reps.reduce((sum, rep) => sum + rep.meanConV, 0) / n;
+    const avgRom = reps.reduce((sum, rep) => sum + rep.rom, 0) / n;
+    const avgStability = reps.reduce((sum, rep) => sum + rep.stability, 0) / n;
+    const avgTempo = reps.reduce((sum, rep) => sum + rep.tempo, 0) / n;
+
+    const velocityLossPct = n >= 2 && reps[0].peakV > 0 ? ((reps[0].peakV - reps[n - 1].peakV) / reps[0].peakV) * 100 : 0;
+    const romMean = avgRom;
+    const romStd = Math.sqrt(reps.reduce((sum, rep) => sum + Math.pow(rep.rom - romMean, 2), 0) / n);
+    const romConsistency = 100 - Math.min(100, romStd * 2);
+    const bestRep = reps.reduce((best, rep) => (rep.peakV > best.peakV ? rep : best), reps[0]);
+    const worstRep = reps.reduce((worst, rep) => (rep.peakV < worst.peakV ? rep : worst), reps[0]);
+
+    return {
+      totalReps: n,
+      duration: set.endTime ? (set.endTime - set.startTime) / 1000 : 0,
+      avgPeakVelocity: parseFloat(avgPeakV.toFixed(3)),
+      avgMeanConcentricVelocity: parseFloat(avgMeanConV.toFixed(3)),
+      avgRom: parseFloat(avgRom.toFixed(1)),
+      avgStability: parseFloat(avgStability.toFixed(1)),
+      avgTempo: parseFloat(avgTempo.toFixed(2)),
+      velocityLossPct: parseFloat(velocityLossPct.toFixed(1)),
+      romConsistency: parseFloat(romConsistency.toFixed(1)),
+      bestRepNumber: bestRep.repNumber,
+      bestRepVelocity: bestRep.peakV,
+      worstRepNumber: worstRep.repNumber,
+      worstRepVelocity: worstRep.peakV,
+    };
+  };
+
+  const addRepToSet = (repData) => {
+    if (!isSetActiveRef.current || !currentSetRef.current) return;
+
+    setCurrentSet((prev) => {
+      if (!prev) return prev;
+      const repMetric = {
+        repNumber: prev.reps.length + 1,
+        peakV: repData.peak_velocity_ms || 0,
+        meanConV: repData.mean_concentric_velocity_ms || 0,
+        meanEccV: repData.mean_eccentric_velocity_ms || 0,
+        rom: repData.rom_cm || 0,
+        concTime: repData.concentric_time_sec || 0,
+        eccTime: repData.eccentric_time_sec || 0,
+        stability: repData.stability_score || 100,
+        tempo: repData.tempo_sec || repData.rep_time || 0,
+        ts: Date.now(),
+      };
+      const next = { ...prev, reps: [...prev.reps, repMetric] };
+      currentSetRef.current = next;
+      return next;
+    });
+  };
+
+  const startSet = (config) => {
+    if (!config?.exercise || !config?.weight) return null;
+
+    const newSet = {
+      id: `set_${Date.now()}`,
+      exercise: config.exercise,
+      weight: config.weight,
+      weightUnit: config.weightUnit || 'lb',
+      targetReps: config.targetReps || null,
+      targetRPE: config.targetRPE || null,
+      startTime: Date.now(),
+      endTime: null,
+      reps: [],
+      summary: null,
+    };
+
+    setCurrentSet(newSet);
+    currentSetRef.current = newSet;
+    setSessionWeight(config.weight);
+    setSessionWeightUnit(config.weightUnit || 'lb');
+    setIsSetActive(true);
+    isSetActiveRef.current = true;
+    startRecording();
+    return newSet;
+  };
+
+  const endSet = () => {
+    const activeSet = currentSetRef.current;
+    if (!activeSet) return null;
+
+    const endedSet = {
+      ...activeSet,
+      endTime: Date.now(),
+    };
+    endedSet.summary = computeSetSummary(endedSet);
+
+    setCurrentSet(endedSet);
+    currentSetRef.current = endedSet;
+    setIsSetActive(false);
+    isSetActiveRef.current = false;
+    setSetHistory((prev) => [...prev, endedSet]);
+    stopRecording();
+    return endedSet;
+  };
+
+  const clearSetData = () => {
+    setCurrentSet(null);
+    currentSetRef.current = null;
+    setIsSetActive(false);
+    isSetActiveRef.current = false;
+    setSetHistory([]);
   };
 
   const handleAutoDetectedLift = (rawLabel, rawConfidence) => {
@@ -196,6 +322,7 @@ export function WebSocketProvider({ children }) {
           peakVelocityMs: data.peak_velocity_ms,
           romCm: data.rom_cm,
         });
+        addRepToSet(data);
         return;
       }
 
@@ -275,6 +402,7 @@ export function WebSocketProvider({ children }) {
     setSelectedSessionLoading(false);
     setSelectedSessionRawLoading(false);
     setExportLoading(false);
+    clearSetData();
   };
 
   const sendMessage = (message) => {
@@ -414,6 +542,9 @@ export function WebSocketProvider({ children }) {
     currentSessionSummary,
     sessionWeight,
     sessionWeightUnit,
+    currentSet,
+    isSetActive,
+    setHistory,
     detectedLift,
     piIp,
     piIpAddress: piIp,
@@ -428,6 +559,9 @@ export function WebSocketProvider({ children }) {
     setPiIp,
     setSessionWeight,
     setSessionWeightUnit,
+    startSet,
+    endSet,
+    clearSetData,
     connect,
     disconnect,
     sendMessage,
