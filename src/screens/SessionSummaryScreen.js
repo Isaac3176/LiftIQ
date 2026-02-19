@@ -4,6 +4,9 @@ import Svg, { Line, Rect, Text as SvgText } from 'react-native-svg';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { useWebSocket } from '../context/WebSocketContext';
+import { useCalibration } from '../context/CalibrationContext';
+import E1RMCard from '../components/E1RMCard';
+import CalibrationProgress from '../components/CalibrationProgress';
 import { theme } from '../theme/performanceLabTheme';
 
 export default function SessionSummaryScreen({ sessionData, onViewHistory, onBackToDashboard }) {
@@ -11,12 +14,16 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
     piIpAddress, exportResult, exportLoading, 
     requestExportSession, clearExportResult, buildExportUrl, repEvents
   } = useWebSocket();
+  const { getE1RM, getCalibrationStatus } = useCalibration();
 
   const [downloadProgress, setDownloadProgress] = useState(null);
   const [shareError, setShareError] = useState(null);
 
   const serverSummary = sessionData?.serverSummary;
   const sessionRepEvents = sessionData?.repEvents || repEvents || [];
+  const exerciseCode = sessionData?.set?.exercise?.code || sessionData?.detectedLift || serverSummary?.detectedLift || null;
+  const outputWeightUnit = sessionData?.set?.weightUnit || sessionData?.weightUnit || 'lb';
+  const outputWeight = sessionData?.set?.weight ?? sessionData?.weight ?? null;
   
   const sessionId = serverSummary?.sessionId || sessionData?.sessionId || null;
   const totalReps = serverSummary?.totalReps ?? sessionData?.reps ?? 0;
@@ -157,6 +164,9 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
       setSummary?.fatigueRecommendation || getFatigueAssessment(summaryVelocityLossPct).recommendation,
     color: setSummary?.fatigueColor || getFatigueAssessment(summaryVelocityLossPct).color,
   };
+  const e1rmData = getE1RM(exerciseCode, outputWeightUnit);
+  const calibrationStatus = getCalibrationStatus(exerciseCode);
+  const pctOfE1RM = e1rmData && outputWeight ? Math.round((Number(outputWeight) / Number(e1rmData.e1rm || 1)) * 100) : null;
 
   // Build rep breakdown
   const getRepBreakdownData = () => {
@@ -305,6 +315,17 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
           )}
         </TouchableOpacity>
         {shareError && <View style={styles.errorBanner}><Text style={styles.errorBannerText}>{shareError}</Text></View>}
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Strength Estimate</Text>
+          <CalibrationProgress status={calibrationStatus} />
+          <E1RMCard e1rmData={e1rmData} weightUnit={outputWeightUnit} />
+          {e1rmData && pctOfE1RM != null && (
+            <View style={styles.e1rmComparison}>
+              <Text style={styles.e1rmComparisonText}>This set was {pctOfE1RM}% of estimated 1RM</Text>
+            </View>
+          )}
+        </View>
 
         {/* Velocity Section (ML Pipeline) */}
         {hasVelocityData && (
@@ -571,6 +592,8 @@ const styles = StyleSheet.create({
   fatigueBarBg: { height: 6, backgroundColor: '#1a1a1a', borderRadius: 3, overflow: 'hidden' },
   fatigueBarFill: { height: '100%', borderRadius: 3 },
   fatigueLevelText: { fontSize: 13, fontWeight: '600', textAlign: 'center' },
+  e1rmComparison: { backgroundColor: theme.colors.surfaceAlt, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: theme.colors.border },
+  e1rmComparisonText: { color: theme.colors.textSecondary, fontSize: 13, textAlign: 'center', fontWeight: '600' },
   noDataContainer: { backgroundColor: '#111', borderRadius: 12, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#1a1a1a' },
   noDataText: { color: '#555', fontSize: 13 },
   sessionIdCard: { backgroundColor: '#111', borderRadius: 12, padding: 16, marginBottom: 16, alignItems: 'center', borderWidth: 1, borderColor: '#1a1a1a' },

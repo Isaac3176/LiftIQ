@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, StatusBar } from 'react-native';
 import { WebSocketProvider } from './src/context/WebSocketContext';
+import { CalibrationProvider } from './src/context/CalibrationContext';
 import { theme } from './src/theme/performanceLabTheme';
 import ConnectScreen from './src/screens/ConnectScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
@@ -119,9 +120,11 @@ function AppContent() {
 
 export default function App() {
   return (
-    <WebSocketProvider>
-      <AppContent />
-    </WebSocketProvider>
+    <CalibrationProvider>
+      <WebSocketProvider>
+        <AppContent />
+      </WebSocketProvider>
+    </CalibrationProvider>
   );
 }
 

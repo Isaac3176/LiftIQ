@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { useCalibration } from './CalibrationContext';
 
 const WebSocketContext = createContext(null);
 const AUTO_LIFT_CONFIDENCE_MIN = 0.55;
 const AUTO_LIFT_STABLE_HITS = 3;
 const AUTO_LIFT_HOLD_MS = 2500;
+const KG_PER_LB = 0.453592;
 
 const FATIGUE_COLORS = {
   low: '#36D399',
@@ -32,6 +34,7 @@ const DEFAULT_LIVE_FATIGUE = {
 };
 
 export function WebSocketProvider({ children }) {
+  const { addCalibrationPoint } = useCalibration();
   const [websocket, setWebsocket] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [lastMessage, setLastMessage] = useState(null);
@@ -312,6 +315,34 @@ export function WebSocketProvider({ children }) {
       endTime: Date.now(),
     };
     endedSet.summary = computeSetSummary(endedSet);
+
+    const exerciseCode = endedSet.exercise?.code || null;
+    const firstRepVelocity = endedSet.reps?.[0]?.meanConV || 0;
+    const bestRepVelocity = endedSet.reps?.length
+      ? Math.max(...endedSet.reps.map((rep) => Number(rep.meanConV) || 0))
+      : 0;
+    const calibrationVelocity = firstRepVelocity > 0 ? firstRepVelocity : bestRepVelocity;
+    let e1rmData = null;
+
+    if (exerciseCode && endedSet.weight && calibrationVelocity > 0) {
+      const profile = addCalibrationPoint(exerciseCode, endedSet.weight, endedSet.weightUnit, calibrationVelocity);
+      const e1rmKg = profile?.estimatedE1RM;
+      if (Number.isFinite(e1rmKg)) {
+        const unit = endedSet.weightUnit || 'lb';
+        const e1rmValue = unit === 'kg' ? e1rmKg : e1rmKg / KG_PER_LB;
+        e1rmData = {
+          e1rm: Math.round(e1rmValue),
+          e1rmKg: Math.round(e1rmKg),
+          unit,
+          confidence: profile?.rSquared ?? 0,
+          dataPoints: profile?.calibrationCount ?? 0,
+          lastCalibrated: profile?.lastCalibrated ?? Date.now(),
+          needsMoreData: (profile?.calibrationCount ?? 0) < 3,
+        };
+      }
+    }
+
+    endedSet.e1rm = e1rmData;
 
     setCurrentSet(endedSet);
     currentSetRef.current = endedSet;
