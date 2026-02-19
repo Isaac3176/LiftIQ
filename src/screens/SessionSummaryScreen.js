@@ -7,6 +7,7 @@ import { useWebSocket } from '../context/WebSocketContext';
 import { useCalibration } from '../context/CalibrationContext';
 import E1RMCard from '../components/E1RMCard';
 import CalibrationProgress from '../components/CalibrationProgress';
+import { exportSession, saveSessionToFile } from '../utils/sessionStorage';
 import { theme } from '../theme/performanceLabTheme';
 
 export default function SessionSummaryScreen({ sessionData, onViewHistory, onBackToDashboard }) {
@@ -18,10 +19,13 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
 
   const [downloadProgress, setDownloadProgress] = useState(null);
   const [shareError, setShareError] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   const serverSummary = sessionData?.serverSummary;
   const sessionRepEvents = sessionData?.repEvents || repEvents || [];
   const exerciseCode = sessionData?.set?.exercise?.code || sessionData?.detectedLift || serverSummary?.detectedLift || null;
+  const exerciseName = sessionData?.set?.exercise?.name || sessionData?.exercise || exerciseCode || 'Exercise';
   const outputWeightUnit = sessionData?.set?.weightUnit || sessionData?.weightUnit || 'lb';
   const outputWeight = sessionData?.set?.weight ?? sessionData?.weight ?? null;
   
@@ -167,6 +171,49 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
   const e1rmData = getE1RM(exerciseCode, outputWeightUnit);
   const calibrationStatus = getCalibrationStatus(exerciseCode);
   const pctOfE1RM = e1rmData && outputWeight ? Math.round((Number(outputWeight) / Number(e1rmData.e1rm || 1)) * 100) : null;
+
+  const computeAverage = (values) => {
+    const valid = values.filter((value) => typeof value === 'number' && Number.isFinite(value));
+    if (!valid.length) return null;
+    return valid.reduce((sum, value) => sum + value, 0) / valid.length;
+  };
+
+  const peakVelocityValues = sessionRepEvents
+    .map((entry) => entry.peakVelocityMs)
+    .filter((value) => typeof value === 'number' && Number.isFinite(value));
+  const bestRepPeakVelocity =
+    setSummary?.bestRepVelocity ?? (peakVelocityValues.length ? Math.max(...peakVelocityValues) : null);
+
+  const avgConcentricVelocity =
+    setSummary?.avgMeanConcentricVelocity ??
+    computeAverage(sessionRepEvents.map((entry) => entry.meanConcentricVelocityMs));
+
+  const dashboardVelocityLoss = setSummary?.velocityLossPct ?? velocityLossPct ?? null;
+  const dashboardStability = setSummary?.avgStability ?? null;
+  const dashboardRomConsistency = setSummary?.romConsistency ?? null;
+  const dashboardE1RM = e1rmData?.e1rm ?? sessionData?.set?.e1rm?.e1rm ?? null;
+
+  const handleLocalExport = async () => {
+    try {
+      await exportSession(sessionData, e1rmData);
+      setSaved(true);
+    } catch (error) {
+      Alert.alert('Export failed', 'Could not export local JSON log.');
+    }
+  };
+
+  const handleSaveLocal = async () => {
+    setIsSaving(true);
+    try {
+      await saveSessionToFile(sessionData, e1rmData);
+      setSaved(true);
+      Alert.alert('Saved', 'Session data saved to local sessions folder.');
+    } catch (error) {
+      Alert.alert('Save failed', 'Could not save session data locally.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   // Build rep breakdown
   const getRepBreakdownData = () => {
@@ -316,6 +363,22 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
         </TouchableOpacity>
         {shareError && <View style={styles.errorBanner}><Text style={styles.errorBannerText}>{shareError}</Text></View>}
 
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={[styles.historyButton, styles.actionButton, saved && styles.savedButton]}
+            onPress={handleSaveLocal}
+            disabled={isSaving}
+          >
+            <Text style={styles.historyButtonText}>{isSaving ? 'Saving...' : saved ? 'Saved' : 'Save'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.historyButton, styles.actionButton]} onPress={handleLocalExport}>
+            <Text style={styles.historyButtonText}>Save & Export</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.backButton2, styles.doneAction]} onPress={onBackToDashboard}>
+            <Text style={styles.doneActionText}>Done</Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Strength Estimate</Text>
           <CalibrationProgress status={calibrationStatus} />
@@ -325,6 +388,21 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
               <Text style={styles.e1rmComparisonText}>This set was {pctOfE1RM}% of estimated 1RM</Text>
             </View>
           )}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Performance Dashboard</Text>
+          <View style={styles.dashboardCard}>
+            <Text style={styles.dashboardExercise}>{exerciseName}</Text>
+            <View style={styles.dashboardGrid}>
+              <DashboardMetric label="Best Rep Peak V" value={formatValue(bestRepPeakVelocity, 2, ' m/s')} />
+              <DashboardMetric label="Avg Concentric V" value={formatValue(avgConcentricVelocity, 2, ' m/s')} />
+              <DashboardMetric label="Velocity Loss" value={formatValue(dashboardVelocityLoss, 1, '%')} />
+              <DashboardMetric label="Estimated 1RM" value={dashboardE1RM != null ? `${dashboardE1RM} ${outputWeightUnit}` : '--'} />
+              <DashboardMetric label="Stability Avg" value={formatValue(dashboardStability, 1)} />
+              <DashboardMetric label="ROM Consistency" value={formatValue(dashboardRomConsistency, 1, '%')} />
+            </View>
+          </View>
         </View>
 
         {/* Velocity Section (ML Pipeline) */}
@@ -520,9 +598,6 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
         <TouchableOpacity style={styles.historyButton} onPress={onViewHistory}>
           <Text style={styles.historyButtonText}>View History</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.backButton2} onPress={onBackToDashboard}>
-          <Text style={styles.backButtonText}>Back to Dashboard</Text>
-        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -600,7 +675,28 @@ const styles = StyleSheet.create({
   sessionIdLabel: { fontSize: 10, color: '#555', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
   sessionIdValue: { fontSize: 11, color: '#666', fontFamily: 'monospace' },
   historyButton: { backgroundColor: theme.colors.surfaceAlt, borderRadius: 12, padding: 16, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: theme.colors.border },
+  historyButtonDisabled: { opacity: 0.55 },
+  actionRow: { flexDirection: 'row', marginBottom: 16 },
+  actionButton: { flex: 1, marginRight: 8, marginBottom: 0, paddingVertical: 14 },
+  doneAction: { flex: 1, justifyContent: 'center', backgroundColor: theme.colors.accent, borderWidth: 1, borderColor: theme.colors.accent, marginBottom: 0 },
+  doneActionText: { color: theme.colors.onAccent, fontSize: 15, fontWeight: '700', textAlign: 'center' },
+  savedButton: { backgroundColor: theme.colors.accentSoft, borderColor: theme.colors.accentSoft },
   historyButtonText: { color: theme.colors.textPrimary, fontSize: 15, fontWeight: '600' },
+  dashboardCard: { backgroundColor: theme.colors.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: theme.colors.border },
+  dashboardExercise: { color: theme.colors.textPrimary, fontSize: 18, fontWeight: '700', marginBottom: 12 },
+  dashboardGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  dashboardMetricCard: { width: '48%', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 10, backgroundColor: theme.colors.surfaceAlt, borderWidth: 1, borderColor: theme.colors.border, marginBottom: 10 },
+  dashboardMetricLabel: { color: theme.colors.textMuted, fontSize: 10, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
+  dashboardMetricValue: { color: theme.colors.textPrimary, fontSize: 16, fontWeight: '700' },
   backButton2: { backgroundColor: 'transparent', borderRadius: 12, padding: 16, alignItems: 'center' },
   backButtonText: { color: theme.colors.textSecondary, fontSize: 15, fontWeight: '500' },
 });
+
+function DashboardMetric({ label, value }) {
+  return (
+    <View style={styles.dashboardMetricCard}>
+      <Text style={styles.dashboardMetricLabel}>{label}</Text>
+      <Text style={styles.dashboardMetricValue}>{value}</Text>
+    </View>
+  );
+}

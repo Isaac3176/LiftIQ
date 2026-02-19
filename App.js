@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { StyleSheet, View, StatusBar } from 'react-native';
 import { WebSocketProvider } from './src/context/WebSocketContext';
 import { CalibrationProvider } from './src/context/CalibrationContext';
+import { saveSessionToFile } from './src/utils/sessionStorage';
 import { theme } from './src/theme/performanceLabTheme';
 import ConnectScreen from './src/screens/ConnectScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
@@ -44,6 +45,17 @@ function AppContent() {
     setWorkoutHistory([newSession, ...workoutHistory]);
     setSessionData(newSession);
     setCurrentScreen('workoutComplete');
+
+    saveSessionToFile(newSession, newSession?.set?.e1rm || null)
+      .then((localLogUri) => {
+        setWorkoutHistory((prev) =>
+          prev.map((entry) => (entry.id === newSession.id ? { ...entry, localLogUri } : entry))
+        );
+        setSessionData((prev) => (prev?.id === newSession.id ? { ...prev, localLogUri } : prev));
+      })
+      .catch((error) => {
+        console.error('Failed to save local session log:', error);
+      });
   };
 
   const handleFinishAnimationComplete = () => {

@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import Svg, { Rect, Line, Polyline, Text as SvgText } from 'react-native-svg';
 import { useWebSocket } from '../context/WebSocketContext';
+import { exportAllSessions, loadAllSessions } from '../utils/sessionStorage';
 import { theme } from '../theme/performanceLabTheme';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -36,6 +37,7 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
   const [refreshing, setRefreshing] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState(null);
+  const [localSessions, setLocalSessions] = useState([]);
 
   const isConnected = connectionStatus === 'connected';
 
@@ -43,6 +45,7 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
     if (isConnected) {
       requestSessions(30);
     }
+    loadAllSessions().then(setLocalSessions).catch(() => setLocalSessions([]));
   }, [isConnected, requestSessions]);
 
   const onRefresh = useCallback(() => {
@@ -64,7 +67,7 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
     }
   }, [selectedSessionSummary, selectedSessionId, requestSessionRaw]);
 
-  const sessions = sessionsList?.sessions || history || [];
+  const sessions = sessionsList?.sessions || history || localSessions || [];
 
   const formatDate = (timestamp) => {
     if (!timestamp) return 'Unknown';
@@ -112,6 +115,14 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
     setShowDetailModal(false);
     setSelectedSessionId(null);
     clearSelectedSession();
+  };
+
+  const handleExportAll = async () => {
+    try {
+      await exportAllSessions();
+    } catch (error) {
+      console.error('Failed to export all sessions:', error);
+    }
   };
 
   const computeTempoStats = (repTimesSec) => {
@@ -389,7 +400,9 @@ export default function HistoryScreen({ history, onBack, onSelectSession }) {
           <Text style={styles.backButton}>‹</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>History</Text>
-        <View style={{ width: 40 }} />
+        <TouchableOpacity onPress={handleExportAll}>
+          <Text style={styles.exportAllButton}>Export All</Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView 
@@ -533,6 +546,13 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: theme.colors.textPrimary,
+  },
+  exportAllButton: {
+    fontSize: 12,
+    color: theme.colors.accent,
+    fontWeight: '700',
+    minWidth: 70,
+    textAlign: 'right',
   },
   scrollContent: {
     padding: 20,
