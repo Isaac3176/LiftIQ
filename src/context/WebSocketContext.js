@@ -5,12 +5,30 @@ const AUTO_LIFT_CONFIDENCE_MIN = 0.55;
 const AUTO_LIFT_STABLE_HITS = 3;
 const AUTO_LIFT_HOLD_MS = 2500;
 
+const FATIGUE_COLORS = {
+  low: '#36D399',
+  moderate: '#ffbc42',
+  high: '#FF9800',
+  very_high: '#ff5d73',
+};
+
 const DEFAULT_DETECTED_LIFT = {
   label: null,
   confidence: 0,
   isActive: false,
   isManual: false,
   status: 'idle',
+};
+
+const DEFAULT_LIVE_FATIGUE = {
+  velocityLossPct: 0,
+  fatigueLevel: 'low',
+  fatigueMessage: 'Low fatigue',
+  fatigueColor: FATIGUE_COLORS.low,
+  recommendation: 'Build baseline with more reps',
+  velocityLossMethod: 'none',
+  firstRepsAvgVelocity: 0,
+  lastRepsAvgVelocity: 0,
 };
 
 export function WebSocketProvider({ children }) {
@@ -29,6 +47,7 @@ export function WebSocketProvider({ children }) {
   const [currentSet, setCurrentSet] = useState(null);
   const [isSetActive, setIsSetActive] = useState(false);
   const [setHistory, setSetHistory] = useState([]);
+  const [liveFatigue, setLiveFatigue] = useState(DEFAULT_LIVE_FATIGUE);
 
   const [detectedLift, setDetectedLift] = useState(DEFAULT_DETECTED_LIFT);
   const [piIp, setPiIp] = useState(null);
@@ -71,6 +90,96 @@ export function WebSocketProvider({ children }) {
     return trimmed;
   };
 
+  const calculateVelocityLoss = (reps) => {
+    if (!reps || reps.length === 0) {
+      return { velocityLossPct: 0, vFirst: 0, vLast: 0, method: 'none' };
+    }
+
+    const velocities = reps
+      .map((rep) => {
+        const raw =
+          rep?.meanConV ??
+          rep?.mean_concentric_velocity_ms ??
+          rep?.meanConcentricVelocityMs ??
+          0;
+        const value = Number(raw);
+        return Number.isFinite(value) ? value : 0;
+      })
+      .filter((value) => value > 0);
+
+    if (velocities.length === 0) {
+      return { velocityLossPct: 0, vFirst: 0, vLast: 0, method: 'none' };
+    }
+
+    const n = velocities.length;
+    let vFirst = 0;
+    let vLast = 0;
+    let method = 'none';
+
+    if (n >= 6) {
+      vFirst = (velocities[0] + velocities[1] + velocities[2]) / 3;
+      vLast = (velocities[n - 3] + velocities[n - 2] + velocities[n - 1]) / 3;
+      method = 'first3_last3';
+    } else if (n >= 4) {
+      vFirst = (velocities[0] + velocities[1]) / 2;
+      vLast = (velocities[n - 2] + velocities[n - 1]) / 2;
+      method = 'first2_last2';
+    } else if (n >= 2) {
+      vFirst = velocities[0];
+      vLast = velocities[n - 1];
+      method = 'first1_last1';
+    } else {
+      return {
+        velocityLossPct: 0,
+        vFirst: parseFloat(velocities[0].toFixed(3)),
+        vLast: parseFloat(velocities[0].toFixed(3)),
+        method: 'single_rep',
+      };
+    }
+
+    const velocityLossPct = vFirst > 0 ? ((vFirst - vLast) / vFirst) * 100 : 0;
+
+    return {
+      velocityLossPct: parseFloat(Math.max(0, velocityLossPct).toFixed(1)),
+      vFirst: parseFloat(vFirst.toFixed(3)),
+      vLast: parseFloat(vLast.toFixed(3)),
+      method,
+    };
+  };
+
+  const getFatigueAssessment = (velocityLossPct) => {
+    if (velocityLossPct < 10) {
+      return {
+        level: 'low',
+        message: 'Low fatigue',
+        recommendation: 'Plenty left in the tank',
+        color: FATIGUE_COLORS.low,
+      };
+    }
+    if (velocityLossPct < 20) {
+      return {
+        level: 'moderate',
+        message: 'Moderate fatigue',
+        recommendation: 'Good training stimulus',
+        color: FATIGUE_COLORS.moderate,
+      };
+    }
+    if (velocityLossPct < 30) {
+      return {
+        level: 'high',
+        message: 'High fatigue',
+        recommendation: 'Consider ending set',
+        color: FATIGUE_COLORS.high,
+      };
+    }
+    return {
+      level: 'very_high',
+      message: 'Very high fatigue',
+      recommendation: 'Stop set - diminishing returns',
+      color: FATIGUE_COLORS.very_high,
+    };
+  };
+
   useEffect(() => {
     currentSetRef.current = currentSet;
   }, [currentSet]);
@@ -78,6 +187,26 @@ export function WebSocketProvider({ children }) {
   useEffect(() => {
     isSetActiveRef.current = isSetActive;
   }, [isSetActive]);
+
+  useEffect(() => {
+    if (!isSetActive || !currentSet?.reps?.length || currentSet.reps.length < 2) {
+      setLiveFatigue(DEFAULT_LIVE_FATIGUE);
+      return;
+    }
+
+    const velocityLossData = calculateVelocityLoss(currentSet.reps);
+    const fatigueAssessment = getFatigueAssessment(velocityLossData.velocityLossPct);
+    setLiveFatigue({
+      velocityLossPct: velocityLossData.velocityLossPct,
+      fatigueLevel: fatigueAssessment.level,
+      fatigueMessage: fatigueAssessment.message,
+      fatigueColor: fatigueAssessment.color,
+      recommendation: fatigueAssessment.recommendation,
+      velocityLossMethod: velocityLossData.method,
+      firstRepsAvgVelocity: velocityLossData.vFirst,
+      lastRepsAvgVelocity: velocityLossData.vLast,
+    });
+  }, [currentSet, isSetActive]);
 
   const computeSetSummary = (set) => {
     if (!set?.reps?.length) {
@@ -92,7 +221,8 @@ export function WebSocketProvider({ children }) {
     const avgStability = reps.reduce((sum, rep) => sum + rep.stability, 0) / n;
     const avgTempo = reps.reduce((sum, rep) => sum + rep.tempo, 0) / n;
 
-    const velocityLossPct = n >= 2 && reps[0].peakV > 0 ? ((reps[0].peakV - reps[n - 1].peakV) / reps[0].peakV) * 100 : 0;
+    const velocityLossData = calculateVelocityLoss(reps);
+    const fatigueAssessment = getFatigueAssessment(velocityLossData.velocityLossPct);
     const romMean = avgRom;
     const romStd = Math.sqrt(reps.reduce((sum, rep) => sum + Math.pow(rep.rom - romMean, 2), 0) / n);
     const romConsistency = 100 - Math.min(100, romStd * 2);
@@ -107,7 +237,14 @@ export function WebSocketProvider({ children }) {
       avgRom: parseFloat(avgRom.toFixed(1)),
       avgStability: parseFloat(avgStability.toFixed(1)),
       avgTempo: parseFloat(avgTempo.toFixed(2)),
-      velocityLossPct: parseFloat(velocityLossPct.toFixed(1)),
+      velocityLossPct: velocityLossData.velocityLossPct,
+      velocityLossMethod: velocityLossData.method,
+      firstRepsAvgVelocity: velocityLossData.vFirst,
+      lastRepsAvgVelocity: velocityLossData.vLast,
+      fatigueLevel: fatigueAssessment.level,
+      fatigueMessage: fatigueAssessment.message,
+      fatigueRecommendation: fatigueAssessment.recommendation,
+      fatigueColor: fatigueAssessment.color,
       romConsistency: parseFloat(romConsistency.toFixed(1)),
       bestRepNumber: bestRep.repNumber,
       bestRepVelocity: bestRep.peakV,
@@ -159,6 +296,7 @@ export function WebSocketProvider({ children }) {
     currentSetRef.current = newSet;
     setSessionWeight(config.weight);
     setSessionWeightUnit(config.weightUnit || 'lb');
+    setLiveFatigue(DEFAULT_LIVE_FATIGUE);
     setIsSetActive(true);
     isSetActiveRef.current = true;
     startRecording();
@@ -179,6 +317,7 @@ export function WebSocketProvider({ children }) {
     currentSetRef.current = endedSet;
     setIsSetActive(false);
     isSetActiveRef.current = false;
+    setLiveFatigue(DEFAULT_LIVE_FATIGUE);
     setSetHistory((prev) => [...prev, endedSet]);
     stopRecording();
     return endedSet;
@@ -189,6 +328,7 @@ export function WebSocketProvider({ children }) {
     currentSetRef.current = null;
     setIsSetActive(false);
     isSetActiveRef.current = false;
+    setLiveFatigue(DEFAULT_LIVE_FATIGUE);
     setSetHistory([]);
   };
 
@@ -403,6 +543,7 @@ export function WebSocketProvider({ children }) {
     setSelectedSessionRawLoading(false);
     setExportLoading(false);
     clearSetData();
+    setLiveFatigue(DEFAULT_LIVE_FATIGUE);
   };
 
   const sendMessage = (message) => {
@@ -545,6 +686,7 @@ export function WebSocketProvider({ children }) {
     currentSet,
     isSetActive,
     setHistory,
+    liveFatigue,
     detectedLift,
     piIp,
     piIpAddress: piIp,

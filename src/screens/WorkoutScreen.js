@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import LiveChart from '../components/LiveChart';
+import FatigueCard from '../components/FatigueCard';
 import StartSetModal from '../components/StartSetModal';
 import { useWebSocket } from '../context/WebSocketContext';
 import { theme } from '../theme/performanceLabTheme';
@@ -69,6 +70,7 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
     sessionWeightUnit,
     currentSet,
     isSetActive,
+    liveFatigue,
     startSet,
     endSet,
     disconnect,
@@ -251,6 +253,15 @@ export default function WorkoutScreen({ onDisconnect, onEndWorkout, onBack }) {
           <Text style={styles.heroLabel}>Reps</Text>
           <Text style={styles.heroValue}>{repCount}</Text>
         </View>
+
+        {isSetActive && currentSet?.reps?.length >= 2 && (
+          <FatigueCard
+            velocityLossPct={liveFatigue.velocityLossPct}
+            fatigueLevel={liveFatigue.fatigueLevel}
+            fatigueColor={liveFatigue.fatigueColor}
+            recommendation={liveFatigue.recommendation}
+          />
+        )}
 
         <View style={styles.graphShell}>
           <LiveChart data={chartData} />

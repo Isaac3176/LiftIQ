@@ -103,6 +103,60 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
   const fatigueInfo = getLossInfo(outputLossPct);
   const velocityFatigueInfo = getLossInfo(velocityLossPct, 15, 25);
   const romFatigueInfo = getLossInfo(romLossPct, 10, 20);
+  const setSummary = sessionData?.set?.summary || null;
+
+  const getFatigueAssessment = (lossPct) => {
+    if (lossPct == null) {
+      return {
+        level: 'unknown',
+        message: 'Insufficient data',
+        recommendation: 'Need at least two velocity-tracked reps',
+        color: theme.colors.textMuted,
+      };
+    }
+    if (lossPct < 10) {
+      return {
+        level: 'low',
+        message: 'Low fatigue',
+        recommendation: 'Great control. You likely had reps in reserve.',
+        color: theme.colors.success,
+      };
+    }
+    if (lossPct < 20) {
+      return {
+        level: 'moderate',
+        message: 'Moderate fatigue',
+        recommendation: 'Good training stimulus achieved.',
+        color: theme.colors.warning,
+      };
+    }
+    if (lossPct < 30) {
+      return {
+        level: 'high',
+        message: 'High fatigue',
+        recommendation: 'Consider ending the set for strength-focused work.',
+        color: '#FF9800',
+      };
+    }
+    return {
+      level: 'very_high',
+      message: 'Very high fatigue',
+      recommendation: 'Stop set: diminishing returns and higher recovery cost.',
+      color: theme.colors.danger,
+    };
+  };
+
+  const summaryVelocityLossPct = setSummary?.velocityLossPct ?? velocityLossPct ?? null;
+  const summaryFirstVelocity = setSummary?.firstRepsAvgVelocity ?? null;
+  const summaryLastVelocity = setSummary?.lastRepsAvgVelocity ?? null;
+  const summaryFatigue = {
+    ...getFatigueAssessment(summaryVelocityLossPct),
+    level: setSummary?.fatigueLevel || getFatigueAssessment(summaryVelocityLossPct).level,
+    message: setSummary?.fatigueMessage || getFatigueAssessment(summaryVelocityLossPct).message,
+    recommendation:
+      setSummary?.fatigueRecommendation || getFatigueAssessment(summaryVelocityLossPct).recommendation,
+    color: setSummary?.fatigueColor || getFatigueAssessment(summaryVelocityLossPct).color,
+  };
 
   // Build rep breakdown
   const getRepBreakdownData = () => {
@@ -347,6 +401,34 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
           </View>
         )}
 
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Fatigue Analysis</Text>
+          <View style={[styles.fatigueCard, { borderLeftColor: summaryFatigue.color }]}>
+            <View style={styles.fatigueHeader}>
+              <Text style={styles.fatigueLabel}>{summaryFatigue.message}</Text>
+              <Text style={[styles.fatiguePct, { color: summaryFatigue.color }]}>
+                {formatValue(summaryVelocityLossPct, 1, '%')}
+              </Text>
+            </View>
+
+            <View style={styles.velocityComparison}>
+              <View style={styles.velocityBlock}>
+                <Text style={styles.velocityLabel}>First reps</Text>
+                <Text style={styles.velocityValue}>{formatValue(summaryFirstVelocity, 3, ' m/s')}</Text>
+              </View>
+              <Text style={styles.velocityArrow}>to</Text>
+              <View style={styles.velocityBlock}>
+                <Text style={styles.velocityLabel}>Last reps</Text>
+                <Text style={styles.velocityValue}>{formatValue(summaryLastVelocity, 3, ' m/s')}</Text>
+              </View>
+            </View>
+
+            <Text style={[styles.fatigueRecommendation, { color: summaryFatigue.color }]}>
+              {summaryFatigue.recommendation}
+            </Text>
+          </View>
+        </View>
+
         {/* Rep Breakdown */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Rep Breakdown</Text>
@@ -460,6 +542,16 @@ const styles = StyleSheet.create({
   tempoStatLabel: { fontSize: 10, color: '#666', marginBottom: 4, textTransform: 'uppercase' },
   tempoStatValue: { fontSize: 16, fontWeight: '600', color: '#fff' },
   tempoStatDivider: { width: 1, backgroundColor: '#222' },
+  fatigueCard: { backgroundColor: '#111', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: '#1a1a1a', borderLeftWidth: 3 },
+  fatigueHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  fatigueLabel: { fontSize: 14, color: '#ddd', fontWeight: '600' },
+  fatiguePct: { fontSize: 30, fontWeight: '800' },
+  velocityComparison: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#191919', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 8, marginBottom: 12 },
+  velocityBlock: { flex: 1, alignItems: 'center' },
+  velocityLabel: { fontSize: 11, color: '#777', marginBottom: 4, textTransform: 'uppercase' },
+  velocityValue: { fontSize: 16, color: '#f2f2f2', fontWeight: '700' },
+  velocityArrow: { color: '#666', fontSize: 16, fontWeight: '600', paddingHorizontal: 8 },
+  fatigueRecommendation: { fontSize: 13, textAlign: 'center', fontWeight: '600' },
   repListCard: { backgroundColor: '#111', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: '#1a1a1a' },
   repHeaderRow: { flexDirection: 'row', paddingBottom: 10, marginBottom: 8, borderBottomWidth: 1, borderBottomColor: '#222' },
   repHeaderCell: { flex: 1, fontSize: 10, color: '#555', textTransform: 'uppercase', letterSpacing: 0.5, textAlign: 'center' },
