@@ -9,14 +9,38 @@ This repository contains a working end-to-end MVP:
 - Real IMU data capture on Raspberry Pi
 - Live WebSocket streaming to mobile app
 - Real-time rep counting during sessions
-- Session summaries and export support
+- Advanced session summary dashboard (velocity, fatigue, ROM, stability, tempo)
+- Velocity-loss fatigue tracking with stop-set recommendations
+- Calibration-based E1RM estimation (per exercise, persistent on device)
+- Local session logging to JSON for future model training datasets
+- Single-session and export-all JSON sharing
 - ML training pipeline for lift classification (offline)
 
 ## Architecture
 
 - `src/` React Native (Expo) mobile app
+- `src/context/CalibrationContext.js` persistent calibration + E1RM utilities
+- `src/utils/sessionStorage.js` local session save/load/export
 - `raspi_files/` Raspberry Pi data capture + WebSocket server
 - `ml/` dataset preprocessing, model training, and TFLite export
+
+## Session Data & Export
+
+Completed sessions are saved locally as JSON files in the app documents directory:
+
+- `sessions/*.json` (managed by `src/utils/sessionStorage.js`)
+
+Saved files include:
+
+- exercise + load metadata
+- full per-rep metrics (velocity, ROM, stability, tempo)
+- session-level summaries (velocity loss, fatigue level)
+- E1RM estimate + confidence (when calibrated)
+
+You can export:
+
+- a single session from Session Summary (`Save & Export`)
+- all locally saved sessions from History (`Export All`)
 
 ## Prerequisites
 
