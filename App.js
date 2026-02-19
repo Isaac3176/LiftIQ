@@ -5,6 +5,7 @@ import { theme } from './src/theme/performanceLabTheme';
 import ConnectScreen from './src/screens/ConnectScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
 import WorkoutScreen from './src/screens/WorkoutScreen';
+import WorkoutCompleteScreen from './src/screens/WorkoutCompleteScreen';
 import SessionSummaryScreen from './src/screens/SessionSummaryScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
 import AnalyticsScreen from './src/screens/AnalyticsScreen';
@@ -41,6 +42,10 @@ function AppContent() {
     
     setWorkoutHistory([newSession, ...workoutHistory]);
     setSessionData(newSession);
+    setCurrentScreen('workoutComplete');
+  };
+
+  const handleFinishAnimationComplete = () => {
     setCurrentScreen('sessionSummary');
   };
 
@@ -79,6 +84,10 @@ function AppContent() {
           onViewHistory={() => navigateTo('history')}
           onBackToDashboard={() => navigateTo('dashboard')}
         />
+      )}
+
+      {currentScreen === 'workoutComplete' && (
+        <WorkoutCompleteScreen onComplete={handleFinishAnimationComplete} />
       )}
       
       {currentScreen === 'history' && (
