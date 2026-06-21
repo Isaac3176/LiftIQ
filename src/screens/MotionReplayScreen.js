@@ -150,6 +150,7 @@ export default function MotionReplayScreen({ sessionData, onBack }) {
               width={viewSize}
               height={viewSize}
               angleDeg={angle}
+              boneColor={verticalityColor}
             />
           )}
           {mode === 'avatar' && (
@@ -191,6 +192,13 @@ export default function MotionReplayScreen({ sessionData, onBack }) {
           </View>
         )}
 
+        {mode === 'avatar' && (
+          <View style={[styles.cueCard, { borderLeftColor: verticalityColor }]}>
+            <Text style={styles.cueLabel}>Coaching cue</Text>
+            <Text style={[styles.cueText, { color: verticalityColor }]}>{getFormCue(metrics)}</Text>
+          </View>
+        )}
+
         {metrics ? (
           <>
             <View style={styles.metricsGrid}>
@@ -216,6 +224,14 @@ export default function MotionReplayScreen({ sessionData, onBack }) {
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+function getFormCue(metrics) {
+  if (!metrics) return 'Recording motion…';
+  if (metrics.horizontalDriftCm >= 8) return 'Bar drifting — keep it stacked over midfoot.';
+  if (metrics.verticalityScore >= 85) return 'Clean, vertical bar path. Nice control.';
+  if (metrics.verticalityScore >= 70) return 'Minor path deviation — tighten the line.';
+  return 'Significant path deviation — focus on bar control.';
 }
 
 function resolvePath(sessionData) {
@@ -302,6 +318,17 @@ const styles = StyleSheet.create({
   progressTrack: { flex: 1, height: 5, borderRadius: 999, backgroundColor: theme.colors.bgElevated, overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: theme.colors.accent, borderRadius: 999 },
   patternLabel: { color: theme.colors.textMuted, fontSize: 11, marginLeft: 10 },
+  cueCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderLeftWidth: 3,
+  },
+  cueLabel: { color: theme.colors.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 },
+  cueText: { fontSize: 14, fontWeight: '600' },
   viewerCard: {
     backgroundColor: theme.colors.surface,
     borderRadius: 18,
