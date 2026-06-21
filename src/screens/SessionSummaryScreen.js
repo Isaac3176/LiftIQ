@@ -10,7 +10,7 @@ import CalibrationProgress from '../components/CalibrationProgress';
 import { exportSession, saveSessionToFile } from '../utils/sessionStorage';
 import { theme } from '../theme/performanceLabTheme';
 
-export default function SessionSummaryScreen({ sessionData, onViewHistory, onBackToDashboard }) {
+export default function SessionSummaryScreen({ sessionData, onViewHistory, onViewMotion, onBackToDashboard }) {
   const { 
     piIpAddress, exportResult, exportLoading, 
     requestExportSession, clearExportResult, buildExportUrl, repEvents
@@ -595,6 +595,11 @@ export default function SessionSummaryScreen({ sessionData, onViewHistory, onBac
         )}
 
         {/* Actions */}
+        {onViewMotion && (
+          <TouchableOpacity style={styles.motionButton} onPress={onViewMotion}>
+            <Text style={styles.motionButtonText}>View 3D Bar Path</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity style={styles.historyButton} onPress={onViewHistory}>
           <Text style={styles.historyButtonText}>View History</Text>
         </TouchableOpacity>
@@ -675,6 +680,8 @@ const styles = StyleSheet.create({
   sessionIdLabel: { fontSize: 10, color: '#555', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
   sessionIdValue: { fontSize: 11, color: '#666', fontFamily: 'monospace' },
   historyButton: { backgroundColor: theme.colors.surfaceAlt, borderRadius: 12, padding: 16, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: theme.colors.border },
+  motionButton: { backgroundColor: theme.colors.accentSoft, borderRadius: 12, padding: 16, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: theme.colors.accent },
+  motionButtonText: { color: theme.colors.accent, fontSize: 15, fontWeight: '700' },
   historyButtonDisabled: { opacity: 0.55 },
   actionRow: { flexDirection: 'row', marginBottom: 16 },
   actionButton: { flex: 1, marginRight: 8, marginBottom: 0, paddingVertical: 14 },

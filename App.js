@@ -9,6 +9,7 @@ import DashboardScreen from './src/screens/DashboardScreen';
 import WorkoutScreen from './src/screens/WorkoutScreen';
 import WorkoutCompleteScreen from './src/screens/WorkoutCompleteScreen';
 import SessionSummaryScreen from './src/screens/SessionSummaryScreen';
+import MotionReplayScreen from './src/screens/MotionReplayScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
 import AnalyticsScreen from './src/screens/AnalyticsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
@@ -92,10 +93,18 @@ function AppContent() {
       )}
       
       {currentScreen === 'sessionSummary' && (
-        <SessionSummaryScreen 
+        <SessionSummaryScreen
           sessionData={sessionData}
           onViewHistory={() => navigateTo('history')}
+          onViewMotion={() => navigateTo('motionReplay')}
           onBackToDashboard={() => navigateTo('dashboard')}
+        />
+      )}
+
+      {currentScreen === 'motionReplay' && (
+        <MotionReplayScreen
+          sessionData={sessionData}
+          onBack={() => navigateTo('sessionSummary')}
         />
       )}
 
