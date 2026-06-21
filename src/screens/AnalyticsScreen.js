@@ -1,14 +1,51 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, StatusBar } from 'react-native';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, StatusBar, Animated, Easing } from 'react-native';
 import Svg, { Line, Polyline, Circle } from 'react-native-svg';
+import { theme } from '../theme/performanceLabTheme';
 
 export default function AnalyticsScreen({ history, onBack }) {
-  // Generate trend data from history
-  const velocityTrend = history.map(h => h.avgVelocity).reverse();
-  const repsTrend = history.map(h => h.reps).reverse();
+  const glowAnim = useRef(new Animated.Value(0.65)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowAnim, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(glowAnim, {
+          toValue: 0.65,
+          duration: 900,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [glowAnim]);
+
+  const velocityTrend = useMemo(() => history.map((h) => h.avgVelocity).filter((v) => v != null).reverse(), [history]);
+  const repsTrend = useMemo(() => history.map((h) => h.reps).filter((v) => v != null).reverse(), [history]);
+
+  const avgVelocity = velocityTrend.length
+    ? velocityTrend.reduce((a, b) => a + b, 0) / velocityTrend.length
+    : 0;
+  const avgReps = repsTrend.length
+    ? Math.round(repsTrend.reduce((a, b) => a + b, 0) / repsTrend.length)
+    : 0;
 
   const renderTrendChart = (data, color, label) => {
-    if (data.length === 0) return null;
+    if (data.length < 2) {
+      return (
+        <View style={styles.chartCard}>
+          <Text style={styles.chartLabel}>{label}</Text>
+          <Text style={styles.emptyText}>Need at least two sessions for trend analysis.</Text>
+        </View>
+      );
+    }
 
     const maxValue = Math.max(...data);
     const minValue = Math.min(...data);
@@ -24,13 +61,8 @@ export default function AnalyticsScreen({ history, onBack }) {
       <View style={styles.chartCard}>
         <Text style={styles.chartLabel}>{label}</Text>
         <Svg width={300} height={100}>
-          <Line x1={30} y1={80} x2={270} y2={80} stroke="#333" strokeWidth="1" />
-          <Polyline
-            points={points}
-            fill="none"
-            stroke={color}
-            strokeWidth="2"
-          />
+          <Line x1={30} y1={80} x2={270} y2={80} stroke={theme.colors.border} strokeWidth="1" />
+          <Polyline points={points} fill="none" stroke={color} strokeWidth="2.2" />
           {data.map((value, index) => {
             const x = 30 + (index / (data.length - 1)) * 240;
             const y = 80 - ((value - minValue) / range) * 60;
@@ -50,48 +82,38 @@ export default function AnalyticsScreen({ history, onBack }) {
       <StatusBar barStyle="light-content" />
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack}>
-          <Text style={styles.backButton}>←</Text>
+          <Text style={styles.backButton}>Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Analytics</Text>
-        <View style={{ width: 40 }} />
+        <View style={{ width: 48 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Performance Summary */}
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.summarySection}>
-          <Text style={styles.sectionTitle}>📊 Performance Overview</Text>
+          <Text style={styles.sectionTitle}>Performance Overview</Text>
           <View style={styles.summaryGrid}>
             <View style={styles.summaryCard}>
-              <Text style={styles.summaryValue}>
-                {(velocityTrend.reduce((a, b) => a + b, 0) / velocityTrend.length).toFixed(2)}
-              </Text>
+              <Text style={styles.summaryValue}>{avgVelocity.toFixed(2)}</Text>
               <Text style={styles.summaryLabel}>Avg Velocity</Text>
-              <Text style={styles.summaryChange}>+8% this week</Text>
+              <Text style={styles.summaryChange}>+8% weekly trend</Text>
             </View>
             <View style={styles.summaryCard}>
-              <Text style={styles.summaryValue}>
-                {Math.floor(repsTrend.reduce((a, b) => a + b, 0) / repsTrend.length)}
-              </Text>
+              <Text style={styles.summaryValue}>{avgReps}</Text>
               <Text style={styles.summaryLabel}>Avg Reps</Text>
-              <Text style={styles.summaryChange}>+2 from last week</Text>
+              <Text style={styles.summaryChange}>+2 weekly trend</Text>
             </View>
           </View>
         </View>
 
-        {/* Velocity Trend */}
-        {renderTrendChart(velocityTrend, '#4CAF50', 'Velocity Trend (m/s)')}
+        {renderTrendChart(velocityTrend, theme.colors.accent, 'Velocity Trend (m/s)')}
+        {renderTrendChart(repsTrend, theme.colors.success, 'Reps Per Session')}
 
-        {/* Reps Trend */}
-        {renderTrendChart(repsTrend, '#2196F3', 'Reps per Session')}
-
-        {/* Strength Metrics */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>💪 Strength Metrics</Text>
-          
+          <Text style={styles.sectionTitle}>Strength Metrics</Text>
           <View style={styles.metricCard}>
             <View style={styles.metricHeader}>
               <Text style={styles.metricName}>Estimated 1RM Progress</Text>
-              <Text style={styles.metricTrend}>↗ +12%</Text>
+              <Text style={styles.metricTrend}>+12%</Text>
             </View>
             <Text style={styles.metricValue}>185 lbs</Text>
             <View style={styles.progressBar}>
@@ -99,71 +121,19 @@ export default function AnalyticsScreen({ history, onBack }) {
             </View>
             <Text style={styles.metricNote}>Goal: 200 lbs</Text>
           </View>
-
-          <View style={styles.metricCard}>
-            <View style={styles.metricHeader}>
-              <Text style={styles.metricName}>Power Output</Text>
-              <Text style={styles.metricTrend}>↗ +8%</Text>
-            </View>
-            <Text style={styles.metricValue}>425 W</Text>
-            <View style={styles.progressBar}>
-              <View style={[styles.progressFill, { width: '65%', backgroundColor: '#2196F3' }]} />
-            </View>
-            <Text style={styles.metricNote}>Elite: 500+ W</Text>
-          </View>
         </View>
 
-        {/* Form Quality */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>✓ Form Quality</Text>
-          
-          <View style={styles.qualityCard}>
-            <View style={styles.qualityItem}>
-              <Text style={styles.qualityLabel}>Bar Path Efficiency</Text>
-              <View style={styles.qualityBar}>
-                <View style={[styles.qualityFill, { width: '96%' }]} />
-              </View>
-              <Text style={styles.qualityScore}>96%</Text>
-            </View>
-
-            <View style={styles.qualityItem}>
-              <Text style={styles.qualityLabel}>ROM Consistency</Text>
-              <View style={styles.qualityBar}>
-                <View style={[styles.qualityFill, { width: '94%' }]} />
-              </View>
-              <Text style={styles.qualityScore}>94%</Text>
-            </View>
-
-            <View style={styles.qualityItem}>
-              <Text style={styles.qualityLabel}>Tempo Control</Text>
-              <View style={styles.qualityBar}>
-                <View style={[styles.qualityFill, { width: '89%' }]} />
-              </View>
-              <Text style={styles.qualityScore}>89%</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Personal Records */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🏆 Personal Records</Text>
-          
-          <View style={styles.prCard}>
-            <Text style={styles.prTitle}>Best Velocity</Text>
+          <Text style={styles.sectionTitle}>Personal Records</Text>
+          <Animated.View style={[styles.prCard, { opacity: glowAnim, borderColor: theme.colors.accent }]}>
+            <Text style={styles.prTitle}>PR Velocity</Text>
             <Text style={styles.prValue}>0.35 m/s</Text>
             <Text style={styles.prDate}>Dec 20, 2025</Text>
-          </View>
-
+          </Animated.View>
           <View style={styles.prCard}>
             <Text style={styles.prTitle}>Most Reps</Text>
             <Text style={styles.prValue}>12 reps</Text>
             <Text style={styles.prDate}>Dec 18, 2025</Text>
-          </View>
-
-          <View style={styles.prCard}>
-            <Text style={styles.prTitle}>Peak Power</Text>
-            <Text style={styles.prValue}>478 W</Text>
-            <Text style={styles.prDate}>Dec 21, 2025</Text>
           </View>
         </View>
       </ScrollView>
@@ -174,7 +144,7 @@ export default function AnalyticsScreen({ history, onBack }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: theme.colors.bg,
   },
   header: {
     flexDirection: 'row',
@@ -183,16 +153,17 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingTop: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
+    borderBottomColor: theme.colors.border,
   },
   backButton: {
-    fontSize: 28,
-    color: '#fff',
+    fontSize: 14,
+    color: theme.colors.textSecondary,
+    fontWeight: '600',
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontSize: 22,
+    fontWeight: '700',
+    color: theme.colors.textPrimary,
   },
   scrollContent: {
     padding: 20,
@@ -201,10 +172,12 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 16,
+    fontSize: 14,
+    fontWeight: '600',
+    color: theme.colors.textSecondary,
+    marginBottom: 14,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
   summaryGrid: {
     flexDirection: 'row',
@@ -212,36 +185,40 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
     padding: 16,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
     alignItems: 'center',
   },
   summaryValue: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#4CAF50',
+    fontSize: 34,
+    fontWeight: '800',
+    color: theme.colors.accent,
   },
   summaryLabel: {
     fontSize: 12,
-    color: '#888',
+    color: theme.colors.textSecondary,
     marginTop: 4,
   },
   summaryChange: {
     fontSize: 11,
-    color: '#4CAF50',
+    color: theme.colors.success,
     marginTop: 4,
   },
   chartCard: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
     padding: 16,
     marginBottom: 16,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
   chartLabel: {
-    fontSize: 14,
-    color: '#888',
+    fontSize: 13,
+    color: theme.colors.textSecondary,
     marginBottom: 12,
   },
   chartLegend: {
@@ -252,16 +229,17 @@ const styles = StyleSheet.create({
   },
   legendText: {
     fontSize: 11,
-    color: '#666',
+    color: theme.colors.textMuted,
   },
   section: {
     marginBottom: 24,
   },
   metricCard: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
     padding: 16,
-    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
   metricHeader: {
     flexDirection: 'row',
@@ -270,84 +248,62 @@ const styles = StyleSheet.create({
   },
   metricName: {
     fontSize: 14,
-    color: '#888',
+    color: theme.colors.textSecondary,
   },
   metricTrend: {
     fontSize: 14,
-    color: '#4CAF50',
-    fontWeight: 'bold',
+    color: theme.colors.success,
+    fontWeight: '700',
   },
   metricValue: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontSize: 30,
+    fontWeight: '800',
+    color: theme.colors.textPrimary,
     marginBottom: 8,
   },
   progressBar: {
     height: 8,
-    backgroundColor: '#222',
+    backgroundColor: theme.colors.surfaceAlt,
     borderRadius: 4,
     marginBottom: 8,
+    overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#4CAF50',
+    backgroundColor: theme.colors.accent,
     borderRadius: 4,
   },
   metricNote: {
     fontSize: 12,
-    color: '#666',
-  },
-  qualityCard: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
-    padding: 16,
-  },
-  qualityItem: {
-    marginBottom: 16,
-  },
-  qualityLabel: {
-    fontSize: 14,
-    color: '#888',
-    marginBottom: 8,
-  },
-  qualityBar: {
-    height: 24,
-    backgroundColor: '#222',
-    borderRadius: 12,
-    marginBottom: 4,
-  },
-  qualityFill: {
-    height: '100%',
-    backgroundColor: '#4CAF50',
-    borderRadius: 12,
-  },
-  qualityScore: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-    textAlign: 'right',
+    color: theme.colors.textMuted,
   },
   prCard: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
     padding: 16,
     marginBottom: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
   prTitle: {
-    fontSize: 14,
-    color: '#888',
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+    marginBottom: 4,
   },
   prValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FFD700',
+    fontSize: 24,
+    fontWeight: '800',
+    color: theme.colors.textPrimary,
   },
   prDate: {
     fontSize: 12,
-    color: '#666',
+    color: theme.colors.textMuted,
+    marginTop: 4,
+  },
+  emptyText: {
+    color: theme.colors.textMuted,
+    fontSize: 13,
+    paddingVertical: 18,
   },
 });
+

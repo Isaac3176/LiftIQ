@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Share, Alert } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import { theme } from '../theme/performanceLabTheme';
 
 export default function SummaryScreen({ sessionData, onNewWorkout, onDisconnect }) {
   const formatDuration = (seconds) => {
@@ -84,7 +85,7 @@ export default function SummaryScreen({ sessionData, onNewWorkout, onDisconnect 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: theme.colors.bg,
     padding: 20,
   },
   header: {
@@ -95,13 +96,15 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#4CAF50',
+    color: theme.colors.accent,
   },
   statsContainer: {
     marginBottom: 40,
   },
   statBox: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
     borderRadius: 12,
     padding: 24,
     alignItems: 'center',
@@ -110,49 +113,53 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 48,
     fontWeight: 'bold',
-    color: '#fff',
+    color: theme.colors.textPrimary,
     marginBottom: 8,
   },
   statLabel: {
     fontSize: 16,
-    color: '#888',
+    color: theme.colors.textSecondary,
   },
   buttonContainer: {
     flex: 1,
     justifyContent: 'center',
   },
   exportButton: {
-    backgroundColor: '#2196F3',
+    backgroundColor: theme.colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
     borderRadius: 12,
     padding: 18,
     alignItems: 'center',
     marginBottom: 16,
   },
   exportButtonText: {
-    color: '#fff',
+    color: theme.colors.textPrimary,
     fontSize: 18,
     fontWeight: 'bold',
   },
   newWorkoutButton: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: theme.colors.accent,
     borderRadius: 12,
     padding: 18,
     alignItems: 'center',
     marginBottom: 16,
   },
   newWorkoutButtonText: {
-    color: '#fff',
+    color: theme.colors.onAccent,
     fontSize: 18,
     fontWeight: 'bold',
   },
   disconnectButton: {
-    backgroundColor: '#333',
+    backgroundColor: theme.colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
     borderRadius: 12,
     padding: 18,
     alignItems: 'center',
   },
   disconnectButtonText: {
-    color: '#fff',
+    color: theme.colors.textPrimary,
     fontSize: 18,
     fontWeight: 'bold',
   },

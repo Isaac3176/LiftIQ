@@ -1,17 +1,18 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { theme } from '../theme/performanceLabTheme';
 
 export default function ConnectionStatus({ status }) {
   const getStatusColor = () => {
     switch (status) {
       case 'connected':
-        return '#4CAF50';
+        return theme.colors.success;
       case 'connecting':
-        return '#FFC107';
+        return theme.colors.warning;
       case 'error':
-        return '#ff4444';
+        return theme.colors.danger;
       default:
-        return '#666';
+        return theme.colors.textMuted;
     }
   };
 
@@ -41,7 +42,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
     padding: 12,
     borderRadius: 8,
     marginBottom: 20,
@@ -53,7 +56,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   text: {
-    color: '#fff',
+    color: theme.colors.textPrimary,
     fontSize: 14,
     fontWeight: '600',
   },

@@ -1,9 +1,13 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, StatusBar } from 'react-native';
 import { WebSocketProvider } from './src/context/WebSocketContext';
+import { CalibrationProvider } from './src/context/CalibrationContext';
+import { saveSessionToFile } from './src/utils/sessionStorage';
+import { theme } from './src/theme/performanceLabTheme';
 import ConnectScreen from './src/screens/ConnectScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
 import WorkoutScreen from './src/screens/WorkoutScreen';
+import WorkoutCompleteScreen from './src/screens/WorkoutCompleteScreen';
 import SessionSummaryScreen from './src/screens/SessionSummaryScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
 import AnalyticsScreen from './src/screens/AnalyticsScreen';
@@ -40,6 +44,21 @@ function AppContent() {
     
     setWorkoutHistory([newSession, ...workoutHistory]);
     setSessionData(newSession);
+    setCurrentScreen('workoutComplete');
+
+    saveSessionToFile(newSession, newSession?.set?.e1rm || null)
+      .then((localLogUri) => {
+        setWorkoutHistory((prev) =>
+          prev.map((entry) => (entry.id === newSession.id ? { ...entry, localLogUri } : entry))
+        );
+        setSessionData((prev) => (prev?.id === newSession.id ? { ...prev, localLogUri } : prev));
+      })
+      .catch((error) => {
+        console.error('Failed to save local session log:', error);
+      });
+  };
+
+  const handleFinishAnimationComplete = () => {
     setCurrentScreen('sessionSummary');
   };
 
@@ -49,7 +68,7 @@ function AppContent() {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0a0a0a" />
+      <StatusBar barStyle="light-content" backgroundColor={theme.colors.bg} />
       
       {currentScreen === 'connect' && (
         <ConnectScreen onConnected={handleConnected} />
@@ -78,6 +97,10 @@ function AppContent() {
           onViewHistory={() => navigateTo('history')}
           onBackToDashboard={() => navigateTo('dashboard')}
         />
+      )}
+
+      {currentScreen === 'workoutComplete' && (
+        <WorkoutCompleteScreen onComplete={handleFinishAnimationComplete} />
       )}
       
       {currentScreen === 'history' && (
@@ -109,15 +132,17 @@ function AppContent() {
 
 export default function App() {
   return (
-    <WebSocketProvider>
-      <AppContent />
-    </WebSocketProvider>
+    <CalibrationProvider>
+      <WebSocketProvider>
+        <AppContent />
+      </WebSocketProvider>
+    </CalibrationProvider>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: theme.colors.bg,
   },
 });

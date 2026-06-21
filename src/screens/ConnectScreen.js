@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  TextInput, 
-  TouchableOpacity, 
-  StyleSheet, 
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -12,11 +12,12 @@ import {
   Keyboard,
   ScrollView,
   SafeAreaView,
-  StatusBar
+  StatusBar,
 } from 'react-native';
 import { connectWebSocket } from '../utils/websocket';
 import { useWebSocket } from '../context/WebSocketContext';
 import ConnectionStatus from '../components/ConnectionStatus';
+import { theme } from '../theme/performanceLabTheme';
 
 export default function ConnectScreen({ onConnected }) {
   const { connect, connectionStatus, setPiIp } = useWebSocket();
@@ -27,7 +28,7 @@ export default function ConnectScreen({ onConnected }) {
 
   const handleConnect = () => {
     Keyboard.dismiss();
-    
+
     if (!ipAddress.trim()) {
       setError('Please enter an IP address');
       return;
@@ -41,9 +42,7 @@ export default function ConnectScreen({ onConnected }) {
       port,
       (ws) => {
         setIsConnecting(false);
-        // Store Pi IP address for export URL building
         setPiIp(ipAddress.trim());
-        // Connect and pass IP to context
         connect(ws, ipAddress.trim());
         setTimeout(() => onConnected(), 500);
       },
@@ -57,18 +56,15 @@ export default function ConnectScreen({ onConnected }) {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <ScrollView 
-            contentContainerStyle={styles.scrollContainer}
-            keyboardShouldPersistTaps="handled"
-          >
+          <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
             <View style={styles.header}>
               <Text style={styles.title}>LiftIQ</Text>
-              <Text style={styles.subtitle}>Connect to Raspberry Pi</Text>
+              <Text style={styles.subtitle}>Dark Performance Lab</Text>
             </View>
 
             <ConnectionStatus status={connectionStatus} />
@@ -80,7 +76,7 @@ export default function ConnectScreen({ onConnected }) {
                 value={ipAddress}
                 onChangeText={setIpAddress}
                 placeholder="10.83.5.191"
-                placeholderTextColor="#666"
+                placeholderTextColor={theme.colors.textMuted}
                 keyboardType="numeric"
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -94,7 +90,7 @@ export default function ConnectScreen({ onConnected }) {
                 value={port}
                 onChangeText={setPort}
                 placeholder="8765"
-                placeholderTextColor="#666"
+                placeholderTextColor={theme.colors.textMuted}
                 keyboardType="numeric"
                 returnKeyType="done"
                 onSubmitEditing={() => Keyboard.dismiss()}
@@ -106,13 +102,13 @@ export default function ConnectScreen({ onConnected }) {
                 </View>
               ) : null}
 
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.button, isConnecting && styles.buttonDisabled]}
                 onPress={handleConnect}
                 disabled={isConnecting}
               >
                 {isConnecting ? (
-                  <ActivityIndicator color="#fff" />
+                  <ActivityIndicator color={theme.colors.onAccent} />
                 ) : (
                   <Text style={styles.buttonText}>Connect</Text>
                 )}
@@ -120,22 +116,14 @@ export default function ConnectScreen({ onConnected }) {
             </View>
 
             <View style={styles.instructions}>
-              <Text style={styles.instructionTitle}>Setup Instructions:</Text>
+              <Text style={styles.instructionTitle}>Setup</Text>
               <Text style={styles.instructionText}>
-                1. Start the WebSocket server on your Raspberry Pi{'\n'}
-                2. Ensure both devices are on the same Wi-Fi network{'\n'}
-                3. Enter the Pi's IP address above{'\n'}
-                4. Default port is 8765{'\n'}
-                5. Tap Connect
+                1. Start WebSocket server on the Raspberry Pi{'\n'}
+                2. Confirm both devices are on the same Wi-Fi{'\n'}
+                3. Enter the Pi IP and port{'\n'}
+                4. Connect and begin your session
               </Text>
             </View>
-
-            <TouchableOpacity 
-              style={styles.dismissButton}
-              onPress={Keyboard.dismiss}
-            >
-              <Text style={styles.dismissButtonText}>Tap anywhere to close keyboard</Text>
-            </TouchableOpacity>
           </ScrollView>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
@@ -146,7 +134,7 @@ export default function ConnectScreen({ onConnected }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: theme.colors.bg,
   },
   scrollContainer: {
     flexGrow: 1,
@@ -154,87 +142,87 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: 'center',
-    marginTop: 40,
-    marginBottom: 40,
+    marginTop: 46,
+    marginBottom: 34,
   },
   title: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-    marginBottom: 8,
+    fontSize: 42,
+    fontWeight: '800',
+    color: theme.colors.accent,
+    marginBottom: 4,
+    letterSpacing: 0.4,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#888',
+    fontSize: 14,
+    color: theme.colors.textSecondary,
   },
   form: {
-    marginBottom: 40,
+    marginBottom: 28,
   },
   label: {
-    fontSize: 14,
-    color: '#aaa',
+    fontSize: 12,
+    color: theme.colors.textSecondary,
     marginBottom: 8,
     marginTop: 16,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
   input: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: theme.colors.surface,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: theme.colors.border,
     borderRadius: 12,
     padding: 16,
     fontSize: 16,
-    color: '#fff',
+    color: theme.colors.textPrimary,
   },
   errorContainer: {
-    backgroundColor: '#ff4444',
-    borderRadius: 8,
+    backgroundColor: 'rgba(255, 93, 115, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 93, 115, 0.4)',
+    borderRadius: 10,
     padding: 12,
     marginTop: 16,
   },
   errorText: {
-    color: '#fff',
+    color: theme.colors.danger,
     fontSize: 14,
     textAlign: 'center',
   },
   button: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: theme.colors.accent,
     borderRadius: 12,
     padding: 18,
     alignItems: 'center',
     marginTop: 24,
   },
   buttonDisabled: {
-    backgroundColor: '#666',
+    backgroundColor: '#2e4234',
   },
   buttonText: {
-    color: '#fff',
+    color: theme.colors.onAccent,
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: '800',
   },
   instructions: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
     padding: 20,
-    marginBottom: 20,
+    marginBottom: 18,
   },
   instructionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 12,
+    fontSize: 13,
+    fontWeight: '700',
+    color: theme.colors.textSecondary,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
   instructionText: {
     fontSize: 14,
-    color: '#aaa',
+    color: theme.colors.textSecondary,
     lineHeight: 22,
-  },
-  dismissButton: {
-    padding: 20,
-    alignItems: 'center',
-  },
-  dismissButtonText: {
-    color: '#666',
-    fontSize: 12,
-    fontStyle: 'italic',
   },
 });

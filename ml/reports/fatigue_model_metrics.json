@@ -1,0 +1,51 @@
+{
+  "dataset": "Kaggle Gym Workout IMU Dataset",
+  "sets_total": 164,
+  "sets_used": 164,
+  "sets_skipped": {},
+  "exercises": 21,
+  "profiled_exercises": 9,
+  "sklearn_available": true,
+  "velocity_loss_stats": {
+    "mean_pct": 40.36,
+    "median_pct": 45.16,
+    "max_pct": 90.18
+  },
+  "fatigue_level_distribution": {
+    "very_high": 100,
+    "low": 52,
+    "moderate": 6,
+    "high": 6
+  },
+  "profile_r_squared": {
+    "30DBP": 0.199,
+    "APULL": 0.114,
+    "CGCR": 0.029,
+    "IDBC": 0.002,
+    "MSP": 0.985,
+    "MTE": 0.06,
+    "NGCR": 0.163,
+    "SAOCTE": 0.011,
+    "SBLP": 0.0
+  },
+  "fatigue_model": {
+    "feature_names": [
+      "load_kg",
+      "first_rep_peak_v",
+      "detected_reps",
+      "exercise_fatigue_bias"
+    ],
+    "n_samples": 164,
+    "target": "velocity_loss_pct",
+    "method": "ridge",
+    "coefficients": [
+      0.0978,
+      5.7167,
+      -0.2611,
+      18.6641
+    ],
+    "intercept": 40.358,
+    "cv_mae": 20.548,
+    "cv_r2": 0.363
+  }
+}

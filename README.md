@@ -28,6 +28,9 @@ A smart weightlifting assistant that turns raw IMU motion data into real-time tr
 - WebSocket streaming from Raspberry Pi to mobile app
 - Start/stop workout sessions with live rep updates
 - Rep counting and session-level workout summaries
+- Velocity-loss fatigue tracking with stop-set recommendations
+- Calibration-based E1RM estimation (per exercise, persistent on device)
+- Offline velocity-based fatigue & E1RM model trained from raw set data
 - Export-ready data path for analysis and iteration
 - Offline ML workflow for preprocessing, training, and TFLite export
 
@@ -52,6 +55,8 @@ Placement guidance:
 ## Architecture
 
 - `src/` React Native (Expo) app UI and workout flow
+- `src/context/CalibrationContext.js` persistent calibration + E1RM utilities
+- `src/utils/sessionStorage.js` local session save/load/export
 - `raspi_files/` Raspberry Pi sensor + WebSocket server
 - `ml/` preprocessing, model training, reports, and export scripts
 
@@ -77,13 +82,29 @@ Default WebSocket endpoint:
 
 ## ML Pipeline
 
-From repo root:
+From repo root.
+
+### Lift classification (Model 3, 1D CNN)
 
 ```bash
 python ml/scripts/preprocess_recgym.py
 python ml/scripts/train_classifier.py
 python ml/scripts/export_tflite.py
 ```
+
+### Fatigue & E1RM (Model 5, velocity-based training)
+
+```bash
+python ml/scripts/train_fatigue_model.py
+```
+
+Offline counterpart to the on-device Model 5 logic
+(`src/context/CalibrationContext.js` load-velocity regression and
+`raspi_files/pi/velocity.py` velocity tracking). It reconstructs per-rep bar
+velocity from each raw set, fits per-exercise load-velocity profiles for E1RM,
+and trains a lightweight fatigue model that predicts end-of-set velocity loss.
+Requires `numpy`, `pandas`, and optionally `scikit-learn` for cross-validated
+metrics.
 
 Outputs:
 
@@ -96,4 +117,5 @@ Outputs:
 - Strengthen velocity and ROM metric accuracy
 - Expand classifier quality and confidence handling
 - Improve session trends and analytics UX
+- 3D bar-path reconstruction and motion replay (Model 6)
 - Evaluate BLE as an alternative to Wi-Fi transport

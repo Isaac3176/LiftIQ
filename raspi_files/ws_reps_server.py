@@ -1,13 +1,58 @@
-import asyncio, json, time, os, platform
-import websockets
-from datetime import datetime, timezone
+"""
+LiftIQ WebSocket Server with ML Pipeline
 
+This is the main server that runs on the Raspberry Pi. It:
+1. Reads IMU data (accelerometer + gyroscope)
+2. Processes through ML pipeline (orientation -> gravity removal -> velocity -> ROM)
+3. Detects reps and computes metrics
+4. Streams data to React Native app via WebSocket
+
+New in this version:
+- Bar velocity estimation (m/s)
+- Range of motion tracking (meters)
+- Orientation-based analysis (roll, pitch, yaw)
+
+Usage:
+    python ws_server.py
+"""
+
+import asyncio
+import json
+import time
+import os
+import platform
 import zipfile
 import threading
+from collections import deque
+from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
+import websockets
+import numpy as np
+
+try:
+    from tflite_runtime.interpreter import Interpreter as TFLiteInterpreter
+except Exception:
+    TFLiteInterpreter = None
+    try:
+        import tensorflow as tf
+        TFLiteInterpreter = tf.lite.Interpreter
+    except Exception:
+        TFLiteInterpreter = None
+
+# Existing imports
 from imu_driver import IMU
 from rep_counter import RepCounter
+
+# NEW: ML Pipeline imports
+from pi.orientation import OrientationFilter
+from pi.gravity import GravityRemover
+from pi.velocity import VelocityEstimator
+from pi.rom import ROMEstimator
+
+# =============================================================================
+# Configuration
+# =============================================================================
 
 HOST = "0.0.0.0"
 PORT = 8765
@@ -18,11 +63,25 @@ EXPORT_DIR = os.path.join(BASE_DIR, "exports")
 os.makedirs(SESS_DIR, exist_ok=True)
 os.makedirs(EXPORT_DIR, exist_ok=True)
 
-clients = set()
+# Sample rate (should match IMU configuration)
+SAMPLE_RATE_HZ = 50.0
 
+# Optional TFLite lift classification (server-side inference)
+ENABLE_TFLITE_INFERENCE = os.getenv("LIFTIQ_ENABLE_TFLITE", "0").lower() in ("1", "true", "yes")
+LIFT_MODEL_PATH = os.getenv("LIFTIQ_LIFT_MODEL_PATH", "").strip()
+LIFT_METADATA_PATH = os.getenv("LIFTIQ_LIFT_METADATA_PATH", "").strip()
+LIFT_INFER_EVERY_N = max(1, int(os.getenv("LIFTIQ_LIFT_INFER_EVERY_N", "25")))  # ~2 Hz at 50 Hz
+
+# State constants
 STATE_CALIBRATING = "CALIBRATING"
 STATE_WAITING = "WAITING"
 STATE_MOVING = "MOVING"
+
+# =============================================================================
+# Global State
+# =============================================================================
+
+clients = set()
 
 LAST_STATUS = {
     "type": "status",
@@ -36,25 +95,39 @@ LAST_STATUS = {
     "output_loss_pct": None,
     "avg_peak_speed_proxy": None,
     "speed_loss_pct": None,
+    # NEW fields
+    "velocity": 0.0,
+    "displacement": 0.0,
+    "roll": 0.0,
+    "pitch": 0.0,
+    "yaw": 0.0,
+    "avg_rom_m": None,
+    "rom_loss_pct": None,
+    "detected_lift": None,
+    "lift_confidence": 0.0,
 }
 
 RESET_REQUESTED = False
-
 SERVER_DEVICE_INFO = {}
 SERVER_THRESHOLDS = {}
+LAST_DETECTED_LIFT = None
+LAST_LIFT_CONFIDENCE = 0.0
 
 _http_thread = None
 _http_port = None
 
 
-# -----------------------------
+# =============================================================================
 # Helpers
-# -----------------------------
+# =============================================================================
+
 def iso_from_ts(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
+
 def make_session_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+
 
 def read_pi_model() -> str:
     try:
@@ -63,11 +136,13 @@ def read_pi_model() -> str:
     except Exception:
         return platform.platform()
 
+
 def safe_getattr(obj, name, default=None):
     try:
         return getattr(obj, name)
     except Exception:
         return default
+
 
 def json_safe(x):
     if x is None:
@@ -80,8 +155,10 @@ def json_safe(x):
         return {str(k): json_safe(v) for k, v in x.items()}
     return str(x)
 
+
 def clamp(v, lo, hi):
     return lo if v < lo else hi if v > hi else v
+
 
 def compute_loss_pct(values):
     """Loss % from first to last (fatigue proxy)."""
@@ -94,8 +171,10 @@ def compute_loss_pct(values):
     loss = (1.0 - (last / first)) * 100.0
     return round(clamp(loss, 0.0, 100.0), 2)
 
+
 def is_command_message(msg: dict) -> bool:
     return msg.get("type") in ("cmd", "command")
+
 
 def _read_json(path: str):
     try:
@@ -105,9 +184,224 @@ def _read_json(path: str):
         return None
 
 
-# -----------------------------
-# HTTP server for exports
-# -----------------------------
+def _existing_path(candidates):
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
+
+
+class LiftClassifierTFLite:
+    """Optional TFLite exercise classifier for server-side inference."""
+
+    def __init__(self, enabled: bool = False):
+        self.requested = bool(enabled)
+        self.enabled = False
+        self.reason = None
+        self.model_path = None
+        self.metadata_path = None
+
+        self.labels = []
+        self.num_classes = 0
+        self.window_samples = 250
+        self.conf_threshold = 0.6
+        self.norm_mean = np.zeros((6,), dtype=np.float32)
+        self.norm_std = np.ones((6,), dtype=np.float32)
+        self.infer_stride = LIFT_INFER_EVERY_N
+
+        self._interpreter = None
+        self._input_index = None
+        self._output_index = None
+        self._input_dtype = np.float32
+        self._input_scale = 1.0
+        self._input_zero_point = 0
+        self._output_scale = 1.0
+        self._output_zero_point = 0
+
+        self._buffer = deque(maxlen=self.window_samples)
+        self._sample_count = 0
+        self._last_infer_at = 0
+
+        self.current_label = None
+        self.current_confidence = 0.0
+        self._session_vote_sum = {}
+        self._session_best_conf = {}
+
+        if self.requested:
+            self._try_init()
+
+    def _find_model_path(self):
+        candidates = [
+            LIFT_MODEL_PATH,
+            os.path.join(BASE_DIR, "models", "lift_classifier.tflite"),
+            os.path.join(BASE_DIR, "lift_classifier.tflite"),
+            os.path.join(BASE_DIR, "..", "ml", "models", "lift_classifier.tflite"),
+        ]
+        return _existing_path(candidates)
+
+    def _find_metadata_path(self):
+        candidates = [
+            LIFT_METADATA_PATH,
+            os.path.join(BASE_DIR, "models", "lift_classifier_metadata.json"),
+            os.path.join(BASE_DIR, "lift_classifier_metadata.json"),
+            os.path.join(BASE_DIR, "..", "ml", "models", "lift_classifier_metadata.json"),
+            os.path.join(BASE_DIR, "..", "ml", "data", "recgym_processed", "metadata.json"),
+        ]
+        return _existing_path(candidates)
+
+    def _try_load_labels_fallback(self):
+        fallback = _existing_path([
+            os.path.join(BASE_DIR, "..", "ml", "data", "recgym_processed", "metadata.json"),
+        ])
+        if fallback:
+            meta = _read_json(fallback) or {}
+            labels = meta.get("labels") or []
+            if labels:
+                self.labels = list(labels)
+                self.num_classes = len(self.labels)
+
+    def _try_init(self):
+        if TFLiteInterpreter is None:
+            self.reason = "tflite_runtime_not_available"
+            return
+
+        self.model_path = self._find_model_path()
+        if not self.model_path:
+            self.reason = "model_not_found"
+            return
+
+        self.metadata_path = self._find_metadata_path()
+        metadata = _read_json(self.metadata_path) if self.metadata_path else {}
+        metadata = metadata or {}
+
+        labels = metadata.get("labels") or []
+        if labels:
+            self.labels = list(labels)
+            self.num_classes = len(self.labels)
+
+        self.window_samples = int(metadata.get("window_samples", self.window_samples))
+        self.conf_threshold = float(metadata.get("confidence_threshold", self.conf_threshold))
+
+        mean = metadata.get("norm_mean")
+        std = metadata.get("norm_std")
+        if isinstance(mean, list) and len(mean) == 6:
+            self.norm_mean = np.asarray(mean, dtype=np.float32)
+        if isinstance(std, list) and len(std) == 6:
+            arr = np.asarray(std, dtype=np.float32)
+            self.norm_std = np.where(arr == 0.0, 1.0, arr)
+
+        self._buffer = deque(maxlen=self.window_samples)
+        self._try_load_labels_fallback()
+
+        try:
+            self._interpreter = TFLiteInterpreter(model_path=self.model_path)
+            self._interpreter.allocate_tensors()
+
+            input_info = self._interpreter.get_input_details()[0]
+            output_info = self._interpreter.get_output_details()[0]
+            self._input_index = input_info["index"]
+            self._output_index = output_info["index"]
+            self._input_dtype = input_info["dtype"]
+
+            in_quant = input_info.get("quantization", (0.0, 0))
+            if in_quant and len(in_quant) == 2 and in_quant[0] not in (0, 0.0):
+                self._input_scale, self._input_zero_point = float(in_quant[0]), int(in_quant[1])
+
+            out_quant = output_info.get("quantization", (0.0, 0))
+            if out_quant and len(out_quant) == 2 and out_quant[0] not in (0, 0.0):
+                self._output_scale, self._output_zero_point = float(out_quant[0]), int(out_quant[1])
+        except Exception as e:
+            self.reason = f"init_failed:{e}"
+            self._interpreter = None
+            return
+
+        self.enabled = True
+        self.reason = None
+
+    def reset_stream(self):
+        self._buffer.clear()
+        self._sample_count = 0
+        self._last_infer_at = 0
+        self.current_label = None
+        self.current_confidence = 0.0
+
+    def start_session(self):
+        self._session_vote_sum = {}
+        self._session_best_conf = {}
+
+    def _record_session_vote(self, label: str, confidence: float):
+        if not label or label == "unknown":
+            return
+        self._session_vote_sum[label] = self._session_vote_sum.get(label, 0.0) + float(confidence)
+        self._session_best_conf[label] = max(self._session_best_conf.get(label, 0.0), float(confidence))
+
+    def session_prediction(self):
+        if not self._session_vote_sum:
+            return None, 0.0
+        top_label = max(self._session_vote_sum, key=self._session_vote_sum.get)
+        return top_label, float(self._session_best_conf.get(top_label, 0.0))
+
+    def push_sample(self, ax, ay, az, gx, gy, gz):
+        if not self.enabled:
+            return None
+
+        self._buffer.append([ax, ay, az, gx, gy, gz])
+        self._sample_count += 1
+
+        if len(self._buffer) < self.window_samples:
+            return None
+        if (self._sample_count - self._last_infer_at) < self.infer_stride:
+            return None
+        self._last_infer_at = self._sample_count
+
+        x = np.asarray(self._buffer, dtype=np.float32)
+        x = (x - self.norm_mean) / self.norm_std
+        x = np.expand_dims(x, axis=0)
+
+        if self._input_dtype != np.float32:
+            x_q = np.round((x / self._input_scale) + self._input_zero_point)
+            if self._input_dtype == np.uint8:
+                x = np.clip(x_q, 0, 255).astype(np.uint8)
+            else:
+                x = np.clip(x_q, -128, 127).astype(np.int8)
+        else:
+            x = x.astype(np.float32)
+
+        try:
+            self._interpreter.set_tensor(self._input_index, x)
+            self._interpreter.invoke()
+            y = self._interpreter.get_tensor(self._output_index)
+        except Exception:
+            return None
+
+        y = np.asarray(y)[0]
+        if y.dtype != np.float32 and self._output_scale not in (0.0, 0):
+            y = (y.astype(np.float32) - self._output_zero_point) * self._output_scale
+        else:
+            y = y.astype(np.float32)
+
+        pred_idx = int(np.argmax(y))
+        confidence = float(y[pred_idx])
+        label = self.labels[pred_idx] if pred_idx < len(self.labels) else str(pred_idx)
+
+        if confidence < self.conf_threshold:
+            label = "unknown"
+
+        self.current_label = label
+        self.current_confidence = confidence
+        self._record_session_vote(label, confidence)
+
+        return {
+            "label": label,
+            "confidence": confidence,
+            "class_idx": pred_idx,
+        }
+
+
+# =============================================================================
+# HTTP Server for Exports
+# =============================================================================
+
 def _start_export_http_server(port: int = 8000):
     global _http_thread, _http_port
     if _http_thread and _http_thread.is_alive():
@@ -117,7 +411,7 @@ def _start_export_http_server(port: int = 8000):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=EXPORT_DIR, **kwargs)
 
-        def log_message(self, format, *args):
+        def log_message(self, fmt, *args):
             return
 
     httpd = ThreadingHTTPServer(("0.0.0.0", port), Handler)
@@ -131,9 +425,10 @@ def _start_export_http_server(port: int = 8000):
     return _http_port
 
 
-# -----------------------------
-# History helpers
-# -----------------------------
+# =============================================================================
+# History Helpers (unchanged from original)
+# =============================================================================
+
 def list_session_summaries(limit: int = 20):
     rows = []
     try:
@@ -164,6 +459,11 @@ def list_session_summaries(limit: int = 20):
             "output_loss_pct": summary.get("output_loss_pct"),
             "avg_peak_speed_proxy": summary.get("avg_peak_speed_proxy"),
             "speed_loss_pct": summary.get("speed_loss_pct"),
+            # NEW
+            "avg_velocity_ms": summary.get("avg_velocity_ms"),
+            "velocity_loss_pct": summary.get("velocity_loss_pct"),
+            "avg_rom_m": summary.get("avg_rom_m"),
+            "rom_loss_pct": summary.get("rom_loss_pct"),
             "_summary_path": summary_path
         })
 
@@ -179,6 +479,7 @@ def list_session_summaries(limit: int = 20):
     limit = max(1, min(200, limit))
     return rows[:limit]
 
+
 def get_session_detail(session_id: str):
     if not session_id:
         return None
@@ -193,6 +494,7 @@ def get_session_detail(session_id: str):
             if isinstance(summary, dict):
                 return summary
     return None
+
 
 def read_session_raw_points(session_id: str, limit: int = 2000, stride: int = 5):
     sdir = os.path.join(SESS_DIR, f"session_{session_id}")
@@ -238,7 +540,12 @@ def read_session_raw_points(session_id: str, limit: int = 2000, stride: int = 5)
                 "gyro_filt": float(gf),
                 "state": st,
                 "reps": int(reps) if reps is not None else None,
-                "recording": bool(rec) if rec is not None else None
+                "recording": bool(rec) if rec is not None else None,
+                # NEW fields
+                "velocity": msg.get("velocity"),
+                "displacement": msg.get("displacement"),
+                "roll": msg.get("roll"),
+                "pitch": msg.get("pitch"),
             })
 
             if len(points) >= limit:
@@ -247,9 +554,10 @@ def read_session_raw_points(session_id: str, limit: int = 2000, stride: int = 5)
     return points
 
 
-# -----------------------------
-# Export helper
-# -----------------------------
+# =============================================================================
+# Export Helper
+# =============================================================================
+
 def export_session_zip(session_id: str, device_info: dict, thresholds: dict):
     if not session_id:
         return None, None
@@ -281,9 +589,10 @@ def export_session_zip(session_id: str, device_info: dict, thresholds: dict):
     return zip_path, filename
 
 
-# -----------------------------
-# Session class
-# -----------------------------
+# =============================================================================
+# Session Class (Extended with ML metrics)
+# =============================================================================
+
 class Session:
     def __init__(self):
         self.active = False
@@ -296,22 +605,24 @@ class Session:
         self.end_ts = None
         self.reps = 0
 
-        # metrics
+        # Existing metrics
         self.moving_time = 0.0
         self.rep_times = []
         self.rep_breakdown = []
         self._last_motion_t = None
         self._last_rep_event_t = None
 
-        # per-rep fatigue proxies
+        # Per-rep fatigue proxies (gyro-based)
         self.peak_gyro_per_rep = []
         self._current_rep_peak = 0.0
-
-        # velocity proxy (from gyro signal window)
         self.speed_proxy_per_rep = []
         self._current_rep_speed_peak = 0.0
         self._current_rep_speed_sum = 0.0
         self._current_rep_speed_n = 0
+
+        # NEW: ML Pipeline metrics
+        self.velocity_per_rep = []  # Peak velocity per rep (m/s)
+        self.rom_per_rep = []       # ROM per rep (meters)
 
     def start(self):
         sid = make_session_id()
@@ -329,6 +640,9 @@ class Session:
         self.reps = 0
         self.active = True
 
+        self._reset_metrics()
+
+    def _reset_metrics(self):
         self.moving_time = 0.0
         self.rep_times = []
         self.rep_breakdown = []
@@ -337,11 +651,14 @@ class Session:
 
         self.peak_gyro_per_rep = []
         self._current_rep_peak = 0.0
-
         self.speed_proxy_per_rep = []
         self._current_rep_speed_peak = 0.0
         self._current_rep_speed_sum = 0.0
         self._current_rep_speed_n = 0
+
+        # NEW
+        self.velocity_per_rep = []
+        self.rom_per_rep = []
 
     def stop(self):
         self.end_ts = time.time()
@@ -383,16 +700,10 @@ class Session:
             self._current_rep_peak = live_filt_abs
 
     def update_speed_proxy(self, live_filt_abs: float):
-        """
-        Velocity proxy = magnitude of filtered gyro (angular speed proxy).
-        We accumulate continuously while recording; then on rep event we finalize.
-        """
         if not self.active:
             return
-        # peak
         if live_filt_abs > self._current_rep_speed_peak:
             self._current_rep_speed_peak = live_filt_abs
-        # avg
         self._current_rep_speed_sum += live_filt_abs
         self._current_rep_speed_n += 1
 
@@ -404,17 +715,11 @@ class Session:
 
     def finalize_speed_proxy(self):
         peak = float(round(self._current_rep_speed_peak, 2))
-        avg = None
-        if self._current_rep_speed_n > 0:
-            avg = float(round(self._current_rep_speed_sum / self._current_rep_speed_n, 2))
-
         self.speed_proxy_per_rep.append(peak)
-
-        # reset window accumulators
         self._current_rep_speed_peak = 0.0
         self._current_rep_speed_sum = 0.0
         self._current_rep_speed_n = 0
-        return peak, avg
+        return peak
 
     def on_rep_event(self, rep_index: int, t: float):
         tempo = None
@@ -426,6 +731,13 @@ class Session:
         self._last_rep_event_t = t
         return tempo
 
+    # NEW: Store ML-based metrics
+    def store_velocity_metric(self, peak_velocity: float):
+        self.velocity_per_rep.append(peak_velocity)
+
+    def store_rom_metric(self, rom: float):
+        self.rom_per_rep.append(rom)
+
     def compute_avg_tempo(self):
         if not self.rep_times:
             return None
@@ -436,6 +748,16 @@ class Session:
             return None
         return sum(self.speed_proxy_per_rep) / len(self.speed_proxy_per_rep)
 
+    def compute_avg_velocity(self):
+        if not self.velocity_per_rep:
+            return None
+        return sum(self.velocity_per_rep) / len(self.velocity_per_rep)
+
+    def compute_avg_rom(self):
+        if not self.rom_per_rep:
+            return None
+        return sum(self.rom_per_rep) / len(self.rom_per_rep)
+
     def write_summary(self, device_info: dict, thresholds: dict):
         if not self.session_dir:
             return None
@@ -445,12 +767,17 @@ class Session:
 
         avg_tempo = self.compute_avg_tempo()
         output_loss = compute_loss_pct(self.peak_gyro_per_rep)
-
         avg_peak_speed = self.compute_avg_peak_speed_proxy()
         speed_loss = compute_loss_pct(self.speed_proxy_per_rep)
 
+        # NEW metrics
+        avg_velocity = self.compute_avg_velocity()
+        velocity_loss = compute_loss_pct(self.velocity_per_rep)
+        avg_rom = self.compute_avg_rom()
+        rom_loss = compute_loss_pct(self.rom_per_rep)
+
         summary = {
-            "version": 8,
+            "version": 9,  # Bumped version for new fields
             "session_id": self.session_id,
             "start_time": iso_from_ts(start_ts),
             "end_time": iso_from_ts(end_ts),
@@ -463,13 +790,21 @@ class Session:
             "rep_times_sec": [round(float(x), 3) for x in self.rep_times],
             "rep_breakdown": self.rep_breakdown,
 
+            # Gyro-based metrics (legacy)
             "peak_gyro_per_rep": [round(float(x), 2) for x in self.peak_gyro_per_rep],
             "output_loss_pct": output_loss,
-
-            # velocity proxy
             "speed_proxy_per_rep": [round(float(x), 2) for x in self.speed_proxy_per_rep],
             "avg_peak_speed_proxy": None if avg_peak_speed is None else round(float(avg_peak_speed), 2),
             "speed_loss_pct": speed_loss,
+
+            # NEW: ML Pipeline metrics
+            "velocity_per_rep_ms": [round(float(x), 3) for x in self.velocity_per_rep],
+            "avg_velocity_ms": None if avg_velocity is None else round(float(avg_velocity), 3),
+            "velocity_loss_pct": velocity_loss,
+
+            "rom_per_rep_m": [round(float(x), 3) for x in self.rom_per_rep],
+            "avg_rom_m": None if avg_rom is None else round(float(avg_rom), 3),
+            "rom_loss_pct": rom_loss,
 
             "device_info": json_safe(device_info or {}),
             "thresholds": json_safe(thresholds or {}),
@@ -485,6 +820,10 @@ class Session:
 session = Session()
 
 
+# =============================================================================
+# WebSocket Broadcast
+# =============================================================================
+
 async def broadcast(msg: dict):
     if not clients:
         return
@@ -499,11 +838,12 @@ async def broadcast(msg: dict):
         clients.discard(ws)
 
 
-# -----------------------------
-# Client handler
-# -----------------------------
+# =============================================================================
+# Client Handler (unchanged structure, new fields in responses)
+# =============================================================================
+
 async def handle_client(ws):
-    global RESET_REQUESTED
+    global RESET_REQUESTED, LAST_DETECTED_LIFT, LAST_LIFT_CONFIDENCE
     clients.add(ws)
     print("Client connected")
 
@@ -544,6 +884,8 @@ async def handle_client(ws):
 
                     avg_tempo = session.compute_avg_tempo()
                     avg_peak_speed = session.compute_avg_peak_speed_proxy()
+                    avg_velocity = session.compute_avg_velocity()
+                    avg_rom = session.compute_avg_rom()
 
                     await ws.send(json.dumps({
                         "type": "ack", "action": "stop", "ok": True,
@@ -563,10 +905,17 @@ async def handle_client(ws):
                         "rep_breakdown": session.rep_breakdown,
 
                         "output_loss_pct": compute_loss_pct(session.peak_gyro_per_rep),
-
                         "speed_proxy_per_rep": [round(float(x), 2) for x in session.speed_proxy_per_rep],
                         "avg_peak_speed_proxy": None if avg_peak_speed is None else round(float(avg_peak_speed), 2),
                         "speed_loss_pct": compute_loss_pct(session.speed_proxy_per_rep),
+
+                        # NEW
+                        "avg_velocity_ms": None if avg_velocity is None else round(float(avg_velocity), 3),
+                        "velocity_loss_pct": compute_loss_pct(session.velocity_per_rep),
+                        "avg_rom_m": None if avg_rom is None else round(float(avg_rom), 3),
+                        "rom_loss_pct": compute_loss_pct(session.rom_per_rep),
+                        "detected_lift": LAST_DETECTED_LIFT,
+                        "lift_confidence": round(float(LAST_LIFT_CONFIDENCE), 3),
 
                         "summary_path": summary_path
                     }))
@@ -597,6 +946,11 @@ async def handle_client(ws):
                         "output_loss_pct": r.get("output_loss_pct"),
                         "avg_peak_speed_proxy": r.get("avg_peak_speed_proxy"),
                         "speed_loss_pct": r.get("speed_loss_pct"),
+                        # NEW
+                        "avg_velocity_ms": r.get("avg_velocity_ms"),
+                        "velocity_loss_pct": r.get("velocity_loss_pct"),
+                        "avg_rom_m": r.get("avg_rom_m"),
+                        "rom_loss_pct": r.get("rom_loss_pct"),
                     })
                 await ws.send(json.dumps({
                     "type": "sessions_list",
@@ -683,12 +1037,15 @@ async def handle_client(ws):
         print("Client disconnected")
 
 
-# -----------------------------
-# IMU loop
-# -----------------------------
+# =============================================================================
+# IMU Loop (Extended with ML Pipeline)
+# =============================================================================
+
 async def imu_loop():
     global LAST_STATUS, RESET_REQUESTED, SERVER_DEVICE_INFO, SERVER_THRESHOLDS
+    global LAST_DETECTED_LIFT, LAST_LIFT_CONFIDENCE
 
+    # Rep detection thresholds
     THRESHOLD = 1200.0
     MIN_REP_TIME = 0.6
     ALPHA = 0.2
@@ -696,12 +1053,12 @@ async def imu_loop():
     SERVER_THRESHOLDS = {
         "threshold": THRESHOLD,
         "min_rep_time_sec": MIN_REP_TIME,
-        "alpha": ALPHA
+        "alpha": ALPHA,
+        "sample_rate_hz": SAMPLE_RATE_HZ,
     }
 
+    # Initialize IMU
     imu = IMU()
-
-    # init retry loop
     while True:
         try:
             imu.init()
@@ -715,10 +1072,10 @@ async def imu_loop():
             await asyncio.sleep(0.5)
             imu = IMU()
 
-    # device info
+    # Device info
     imu_addr = safe_getattr(imu, "addr", None) or safe_getattr(imu, "address", None)
     i2c_bus = safe_getattr(imu, "i2c_bus", None) or safe_getattr(imu, "bus_num", None)
-    sample_rate_hz = safe_getattr(imu, "sample_rate_hz", None) or safe_getattr(imu, "rate_hz", None)
+    sample_rate_hz = safe_getattr(imu, "sample_rate_hz", None) or SAMPLE_RATE_HZ
 
     try:
         imu_addr_int = int(imu_addr) if imu_addr is not None else 0
@@ -726,16 +1083,31 @@ async def imu_loop():
     except Exception:
         imu_addr_str = str(imu_addr) if imu_addr is not None else "unknown"
 
+    lift_classifier = LiftClassifierTFLite(enabled=ENABLE_TFLITE_INFERENCE)
+
     SERVER_DEVICE_INFO = json_safe({
         "pi_model": read_pi_model(),
         "imu": safe_getattr(imu, "name", None) or "IMU",
         "i2c_bus": i2c_bus if i2c_bus is not None else 1,
         "imu_addr": imu_addr_str,
-        "sample_rate_hz": int(sample_rate_hz) if isinstance(sample_rate_hz, (int, float)) else (sample_rate_hz or 50),
+        "sample_rate_hz": int(sample_rate_hz),
+        "ml_pipeline_version": "1.0.0",
+        "tflite_lift_inference_requested": bool(ENABLE_TFLITE_INFERENCE),
+        "tflite_lift_inference_enabled": bool(lift_classifier.enabled),
+        "tflite_lift_model_path": lift_classifier.model_path,
+        "tflite_lift_metadata_path": lift_classifier.metadata_path,
+        "tflite_lift_reason": lift_classifier.reason,
     })
 
+    # Rep counters
     live_counter = RepCounter(threshold=THRESHOLD, min_rep_time=MIN_REP_TIME, alpha=ALPHA)
     session_counter = RepCounter(threshold=THRESHOLD, min_rep_time=MIN_REP_TIME, alpha=ALPHA)
+
+    # NEW: ML Pipeline components
+    orientation = OrientationFilter(sample_rate_hz=SAMPLE_RATE_HZ, beta=0.1)
+    gravity_remover = GravityRemover()
+    velocity_estimator = VelocityEstimator(sample_rate_hz=SAMPLE_RATE_HZ)
+    rom_estimator = ROMEstimator(sample_rate_hz=SAMPLE_RATE_HZ)
 
     calib_secs = 2.0
     calib_start = time.time()
@@ -744,6 +1116,8 @@ async def imu_loop():
     last_send = 0.0
     was_recording = False
     last_session_reps = 0
+    detected_lift_label = None
+    detected_lift_conf = 0.0
 
     consecutive_failures = 0
     last_error_sent = 0.0
@@ -752,26 +1126,29 @@ async def imu_loop():
         while True:
             t = time.time() - t0
 
+            # Handle reset request
             if RESET_REQUESTED:
                 live_counter = RepCounter(threshold=THRESHOLD, min_rep_time=MIN_REP_TIME, alpha=ALPHA)
                 session_counter = RepCounter(threshold=THRESHOLD, min_rep_time=MIN_REP_TIME, alpha=ALPHA)
 
                 session.reps = 0
-                session.moving_time = 0.0
-                session.rep_times = []
-                session.rep_breakdown = []
-                session.peak_gyro_per_rep = []
-                session.speed_proxy_per_rep = []
-                session._last_motion_t = None
-                session._last_rep_event_t = None
-                session._current_rep_peak = 0.0
-                session._current_rep_speed_peak = 0.0
-                session._current_rep_speed_sum = 0.0
-                session._current_rep_speed_n = 0
-
+                session._reset_metrics()
                 last_session_reps = 0
+
+                # Reset ML pipeline
+                orientation.reset()
+                velocity_estimator.reset()
+                rom_estimator.reset()
+                lift_classifier.reset_stream()
+                lift_classifier.start_session()
+                detected_lift_label = None
+                detected_lift_conf = 0.0
+                LAST_DETECTED_LIFT = None
+                LAST_LIFT_CONFIDENCE = 0.0
+
                 RESET_REQUESTED = False
 
+            # Read IMU
             try:
                 ax, ay, az, gx, gy, gz = imu.read_accel_gyro()
                 consecutive_failures = 0
@@ -797,47 +1174,87 @@ async def imu_loop():
                         await asyncio.sleep(0.25)
                 continue
 
+            # =========================================================
+            # ML PIPELINE PROCESSING
+            # =========================================================
+
+            # 1. Get orientation (roll, pitch, yaw)
+            roll, pitch, yaw = orientation.update(ax, ay, az, gx, gy, gz)
+
+            # 2. Remove gravity to get linear acceleration
+            a_lin_x, a_lin_y, a_lin_z = gravity_remover.remove_gravity(
+                ax, ay, az, roll, pitch, yaw
+            )
+
+            # 3. Rep detection (using existing gyro-based method)
             _lr, live_filt, live_state = live_counter.update(gx, gy, gz, t)
             mapped = STATE_MOVING if live_state == "MOVING" else STATE_WAITING
             ui_state = STATE_CALIBRATING if (time.time() - calib_start < calib_secs) else mapped
 
-            live_abs = abs(float(live_filt))
+            infer_out = lift_classifier.push_sample(ax, ay, az, gx, gy, gz)
+            if infer_out is not None:
+                detected_lift_label = infer_out["label"]
+                detected_lift_conf = infer_out["confidence"]
+                LAST_DETECTED_LIFT = detected_lift_label
+                LAST_LIFT_CONFIDENCE = float(detected_lift_conf)
 
-            # metrics only during recording
+            # 4. Determine if bar is stable (for ZUPT)
+            is_stable = (ui_state == STATE_WAITING)
+
+            # 5. Estimate velocity (with ZUPT when stable)
+            velocity = velocity_estimator.update(a_lin_z, is_stable=is_stable, timestamp=t)
+
+            # 6. Update ROM
+            displacement = rom_estimator.update(velocity, timestamp=t)
+
+            # =========================================================
+            # EXISTING METRIC TRACKING
+            # =========================================================
+
+            live_abs = abs(float(live_filt))
             session.update_tut(mapped, t)
             session.update_peak(live_abs)
             session.update_speed_proxy(live_abs)
 
+            # Handle recording state transitions
             if session.active and not was_recording:
                 session_counter = RepCounter(threshold=THRESHOLD, min_rep_time=MIN_REP_TIME, alpha=ALPHA)
-                session.reps = 0
-                session.moving_time = 0.0
-                session.rep_times = []
-                session.rep_breakdown = []
-                session.peak_gyro_per_rep = []
-                session.speed_proxy_per_rep = []
-                session._last_motion_t = None
-                session._last_rep_event_t = None
-                session._current_rep_peak = 0.0
-                session._current_rep_speed_peak = 0.0
-                session._current_rep_speed_sum = 0.0
-                session._current_rep_speed_n = 0
+                session._reset_metrics()
                 last_session_reps = 0
+
+                # Reset ML pipeline for new session
+                velocity_estimator.reset()
+                rom_estimator.reset()
+                lift_classifier.start_session()
+                detected_lift_label = None
+                detected_lift_conf = 0.0
+                LAST_DETECTED_LIFT = None
+                LAST_LIFT_CONFIDENCE = 0.0
 
             was_recording = session.active
 
+            # Rep detection and metrics during recording
             if session.active:
                 reps, _sf, _ss = session_counter.update(gx, gy, gz, t)
 
                 if reps > last_session_reps:
-                    # tempo
+                    # Rep completed!
+
+                    # Gyro-based metrics
                     tempo = session.on_rep_event(int(reps), t)
-
-                    # fatigue proxy peak gyro per rep
                     peak_gyro = session.finalize_rep_peak()
+                    peak_speed_proxy = session.finalize_speed_proxy()
 
-                    # velocity proxy per rep
-                    peak_speed, avg_speed = session.finalize_speed_proxy()
+                    # ML-based metrics
+                    velocity_metrics = velocity_estimator.on_rep_complete()
+                    rep_rom = rom_estimator.on_rep_complete()
+
+                    session.store_velocity_metric(velocity_metrics['peak_velocity'])
+                    session.store_rom_metric(rep_rom)
+
+                    # Start tracking next rep
+                    velocity_estimator.on_rep_start()
+                    rom_estimator.on_rep_start()
 
                     confidence = min(1.0, max(0.0, live_abs / 2000.0))
 
@@ -847,34 +1264,43 @@ async def imu_loop():
                         "t": round(t, 3),
                         "confidence": round(confidence, 2),
 
+                        # Gyro-based
                         "tempo_sec": tempo,
                         "peak_gyro": peak_gyro,
+                        "peak_speed_proxy": peak_speed_proxy,
 
-                        # NEW:
-                        "peak_speed_proxy": peak_speed,
-                        "avg_speed_proxy": avg_speed
+                        # ML-based
+                        "peak_velocity_ms": round(velocity_metrics['peak_velocity'], 3),
+                        "mean_concentric_velocity_ms": round(velocity_metrics['mean_concentric_velocity'], 3),
+                        "rom_m": round(rep_rom, 3),
+                        "rom_cm": round(rep_rom * 100, 1),
                     }
                     await broadcast(rep_event)
                     session.log(rep_event)
 
-                    # also store into breakdown for summary screen
+                    # Store in breakdown
                     bd = {
                         "rep": int(reps),
                         "t": round(t, 3),
                         "tempo_sec": tempo,
-                        "peak_speed_proxy": peak_speed,
-                        "avg_speed_proxy": avg_speed,
+                        "peak_speed_proxy": peak_speed_proxy,
                         "peak_gyro": peak_gyro,
                         "confidence": round(confidence, 2),
+                        # ML metrics
+                        "peak_velocity_ms": round(velocity_metrics['peak_velocity'], 3),
+                        "rom_m": round(rep_rom, 3),
                     }
                     session.rep_breakdown.append(bd)
 
                 session.reps = int(reps)
                 last_session_reps = int(reps)
 
+            # Broadcast status update at 10 Hz
             if t - last_send >= 0.1:
                 avg_tempo = session.compute_avg_tempo()
                 avg_peak_speed = session.compute_avg_peak_speed_proxy()
+                avg_velocity = session.compute_avg_velocity()
+                avg_rom = session.compute_avg_rom()
 
                 payload = {
                     "type": "rep_update",
@@ -884,14 +1310,26 @@ async def imu_loop():
                     "recording": bool(session.active),
                     "gyro_filt": round(float(live_filt), 1),
 
+                    # Existing metrics
                     "tut_sec": round(float(session.moving_time), 2),
                     "avg_tempo_sec": None if avg_tempo is None else round(float(avg_tempo), 2),
-
                     "output_loss_pct": compute_loss_pct(session.peak_gyro_per_rep),
-
-                    # NEW:
                     "avg_peak_speed_proxy": None if avg_peak_speed is None else round(float(avg_peak_speed), 2),
                     "speed_loss_pct": compute_loss_pct(session.speed_proxy_per_rep),
+
+                    # NEW: ML Pipeline metrics
+                    "velocity": round(velocity, 3),
+                    "displacement": round(displacement, 4),
+                    "roll": round(roll, 1),
+                    "pitch": round(pitch, 1),
+                    "yaw": round(yaw, 1),
+
+                    "avg_velocity_ms": None if avg_velocity is None else round(float(avg_velocity), 3),
+                    "velocity_loss_pct": compute_loss_pct(session.velocity_per_rep),
+                    "avg_rom_m": None if avg_rom is None else round(float(avg_rom), 3),
+                    "rom_loss_pct": compute_loss_pct(session.rom_per_rep),
+                    "detected_lift": detected_lift_label,
+                    "lift_confidence": round(float(detected_lift_conf), 3),
                 }
 
                 LAST_STATUS = dict(payload)
@@ -901,7 +1339,7 @@ async def imu_loop():
                 session.log(payload)
                 last_send = t
 
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(0.02)  # 50 Hz
 
     finally:
         try:
@@ -910,11 +1348,16 @@ async def imu_loop():
             pass
 
 
-# -----------------------------
+# =============================================================================
 # Main
-# -----------------------------
+# =============================================================================
+
 async def main():
-    print(f"WS server listening on ws://{HOST}:{PORT}")
+    print(f"LiftIQ Server v9 (with ML Pipeline)")
+    print(f"WebSocket: ws://{HOST}:{PORT}")
+    print(f"Sample rate: {SAMPLE_RATE_HZ} Hz")
+    print(f"TFLite lift inference requested: {ENABLE_TFLITE_INFERENCE}")
+    
     server = await websockets.serve(
         handle_client, HOST, PORT,
         ping_interval=20,
@@ -923,6 +1366,7 @@ async def main():
     await imu_loop()
     server.close()
     await server.wait_closed()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
