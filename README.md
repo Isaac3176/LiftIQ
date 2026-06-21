@@ -16,12 +16,17 @@ This repository contains a working end-to-end MVP:
 - Single-session and export-all JSON sharing
 - ML training pipeline for lift classification (offline)
 - Offline velocity-based fatigue & E1RM model trained from raw set data
+- 3D bar-path reconstruction and animated IK avatar (motion replay)
 
 ## Architecture
 
 - `src/` React Native (Expo) mobile app
 - `src/context/CalibrationContext.js` persistent calibration + E1RM utilities
 - `src/utils/sessionStorage.js` local session save/load/export
+- `src/utils/barPath.js` bar-path reconstruction + 3D projection (Model 6)
+- `src/utils/skeleton.js` / `src/utils/ik.js` / `src/utils/liftPose.js` avatar rig, IK, and pose driver
+- `src/components/BarPath3D.js` / `src/components/SkeletonAvatar3D.js` SVG 3D renderers
+- `src/screens/MotionReplayScreen.js` 3D motion replay screen
 - `raspi_files/` Raspberry Pi data capture + WebSocket server
 - `ml/` dataset preprocessing, model training, and TFLite export
 
@@ -106,6 +111,31 @@ Outputs are saved under:
 
 - `ml/models/`
 - `ml/reports/`
+
+## 3D Motion Replay (Model 6)
+
+After finishing a set, open **View 3D Bar Path** on the Session Summary to
+reconstruct and replay the lift in 3D. Two modes share one rotatable camera:
+
+- **Bar Path** — the barbell trajectory rebuilt from the captured IMU stream
+  (`sessionData.samples`): vertical travel from displacement, horizontal drift
+  from orientation. Segments are colored by velocity, with a dashed ideal-path
+  reference and path-quality metrics (vertical ROM, horizontal drift,
+  verticality score, arc type).
+- **Avatar** — an animated stick-figure skeleton that copies the lift. The bar
+  path drives a per-exercise movement model (squat / hinge / press / curl / row),
+  closed with analytic two-bone inverse kinematics; the skeleton is colored by
+  form quality with a live coaching cue.
+
+Both views render with `react-native-svg` (no WebGL dependency), so they run in
+Expo Go. When no motion stream is available the screen falls back to a per-rep
+approximation, then to a demo path, so it always renders.
+
+Notes:
+
+- The avatar is a joint/stick-figure reconstruction, not a captured 3D mesh.
+- A wrist/bar IMU provides vertical travel + orientation, not full limb capture,
+  so the avatar is a plausible reconstruction of the movement pattern.
 
 ## Common Commands
 
