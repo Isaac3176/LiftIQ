@@ -1,0 +1,194 @@
+{
+  "model": "fatigue_e1rm",
+  "version": 1,
+  "description": "Model 5 - VBT fatigue & E1RM predictor",
+  "sample_rate_hz": 100.0,
+  "target_velocities": {
+    "MIBP": 0.17,
+    "SMS": 0.3,
+    "OHP": 0.2,
+    "SBLP": 0.22,
+    "CGCR": 0.22,
+    "NGCR": 0.22,
+    "APULL": 0.22,
+    "DEFAULT": 0.2
+  },
+  "fatigue_bands": [
+    {
+      "max_loss_pct": 10.0,
+      "level": "low"
+    },
+    {
+      "max_loss_pct": 20.0,
+      "level": "moderate"
+    },
+    {
+      "max_loss_pct": 30.0,
+      "level": "high"
+    },
+    {
+      "max_loss_pct": null,
+      "level": "very_high"
+    }
+  ],
+  "velocity_profiles": {
+    "30DBP": {
+      "n_sets": 16,
+      "n_loads": 4,
+      "load_range_kg": [
+        7.0,
+        17.0
+      ],
+      "slope": -0.002052,
+      "intercept": 0.1542,
+      "r_squared": 0.199,
+      "target_velocity_ms": 0.2,
+      "estimated_1rm_kg": null,
+      "mean_velocity_loss_pct": 63.97
+    },
+    "APULL": {
+      "n_sets": 26,
+      "n_loads": 7,
+      "load_range_kg": [
+        61.0,
+        83.0
+      ],
+      "slope": 0.0009,
+      "intercept": 0.0035,
+      "r_squared": 0.114,
+      "target_velocity_ms": 0.22,
+      "estimated_1rm_kg": null,
+      "mean_velocity_loss_pct": 37.07
+    },
+    "CGCR": {
+      "n_sets": 7,
+      "n_loads": 2,
+      "load_range_kg": [
+        45.0,
+        52.0
+      ],
+      "slope": 0.001129,
+      "intercept": 0.0407,
+      "r_squared": 0.029,
+      "target_velocity_ms": 0.22,
+      "estimated_1rm_kg": null,
+      "mean_velocity_loss_pct": 16.03
+    },
+    "IDBC": {
+      "n_sets": 16,
+      "n_loads": 2,
+      "load_range_kg": [
+        5.0,
+        7.0
+      ],
+      "slope": 0.030093,
+      "intercept": 0.0291,
+      "r_squared": 0.002,
+      "target_velocity_ms": 0.2,
+      "estimated_1rm_kg": null,
+      "mean_velocity_loss_pct": 39.61
+    },
+    "MSP": {
+      "n_sets": 3,
+      "n_loads": 3,
+      "load_range_kg": [
+        4.0,
+        13.0
+      ],
+      "slope": -0.000661,
+      "intercept": 0.1353,
+      "r_squared": 0.985,
+      "target_velocity_ms": 0.2,
+      "estimated_1rm_kg": null,
+      "mean_velocity_loss_pct": 0.0
+    },
+    "MTE": {
+      "n_sets": 11,
+      "n_loads": 2,
+      "load_range_kg": [
+        13.0,
+        18.0
+      ],
+      "slope": -0.003167,
+      "intercept": 0.1467,
+      "r_squared": 0.06,
+      "target_velocity_ms": 0.2,
+      "estimated_1rm_kg": null,
+      "mean_velocity_loss_pct": 13.53
+    },
+    "NGCR": {
+      "n_sets": 10,
+      "n_loads": 4,
+      "load_range_kg": [
+        32.0,
+        52.0
+      ],
+      "slope": 0.000722,
+      "intercept": 0.0729,
+      "r_squared": 0.163,
+      "target_velocity_ms": 0.22,
+      "estimated_1rm_kg": null,
+      "mean_velocity_loss_pct": 39.36
+    },
+    "SAOCTE": {
+      "n_sets": 15,
+      "n_loads": 2,
+      "load_range_kg": [
+        11.0,
+        18.0
+      ],
+      "slope": -0.011343,
+      "intercept": 0.3148,
+      "r_squared": 0.011,
+      "target_velocity_ms": 0.2,
+      "estimated_1rm_kg": null,
+      "mean_velocity_loss_pct": 61.24
+    },
+    "SBLP": {
+      "n_sets": 7,
+      "n_loads": 4,
+      "load_range_kg": [
+        25.0,
+        45.0
+      ],
+      "slope": -7.3e-05,
+      "intercept": 0.2709,
+      "r_squared": 0.0,
+      "target_velocity_ms": 0.22,
+      "estimated_1rm_kg": null,
+      "mean_velocity_loss_pct": 0.0
+    }
+  },
+  "fatigue_model": {
+    "feature_names": [
+      "load_kg",
+      "first_rep_peak_v",
+      "detected_reps",
+      "exercise_fatigue_bias"
+    ],
+    "feature_mean": [
+      24.3293,
+      0.8077,
+      30.9451,
+      40.358
+    ],
+    "feature_std": [
+      23.26,
+      1.7463,
+      23.7808,
+      19.3975
+    ],
+    "n_samples": 164,
+    "target": "velocity_loss_pct",
+    "method": "ridge",
+    "coefficients": [
+      0.0978,
+      5.7167,
+      -0.2611,
+      18.6641
+    ],
+    "intercept": 40.358,
+    "cv_mae": 20.548,
+    "cv_r2": 0.363
+  }
+}

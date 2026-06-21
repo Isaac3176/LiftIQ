@@ -24,8 +24,8 @@ import tensorflow as tf
 
 MODEL_PATH = 'ml/models/lift_classifier.h5'
 BEST_MODEL_PATH = 'ml/models/lift_classifier_best.h5'
-DATA_PATH = 'ml/data/gym_imu_processed/windows.npz'
-METADATA_PATH = 'ml/data/gym_imu_processed/metadata.json'
+DATA_PATH = 'ml/data/recgym_processed/windows.npz'
+METADATA_PATH = 'ml/data/recgym_processed/metadata.json'
 OUTPUT_DIR = 'ml/models'
 
 CONFIDENCE_THRESHOLD = 0.6

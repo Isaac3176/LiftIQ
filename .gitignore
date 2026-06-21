@@ -43,3 +43,7 @@ yarn-error.*
 # local python virtual envs
 .venv/
 .venv312/
+
+# python bytecode
+__pycache__/
+*.pyc

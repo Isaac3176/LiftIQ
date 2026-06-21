@@ -15,6 +15,7 @@ This repository contains a working end-to-end MVP:
 - Local session logging to JSON for future model training datasets
 - Single-session and export-all JSON sharing
 - ML training pipeline for lift classification (offline)
+- Offline velocity-based fatigue & E1RM model trained from raw set data
 
 ## Architecture
 
@@ -72,13 +73,34 @@ Default WebSocket endpoint:
 
 ## ML Pipeline
 
-From repo root:
+From repo root.
+
+### Lift classification (Model 3, 1D CNN)
 
 ```bash
 python ml/scripts/preprocess_recgym.py
 python ml/scripts/train_classifier.py
 python ml/scripts/export_tflite.py
 ```
+
+### Fatigue & E1RM (Model 5, velocity-based training)
+
+```bash
+python ml/scripts/train_fatigue_model.py
+```
+
+This is the offline counterpart to the on-device Model 5 logic
+(`src/context/CalibrationContext.js` load-velocity regression and
+`raspi_files/pi/velocity.py` velocity tracking). It reconstructs per-rep bar
+velocity from each raw set, fits per-exercise load-velocity (L-V) profiles used
+for E1RM extrapolation, and trains a lightweight fatigue model that predicts
+end-of-set velocity loss. Outputs:
+
+- `ml/models/fatigue_e1rm_model.json` (L-V profiles, target velocities, fatigue model)
+- `ml/reports/fatigue_model_metrics.json` (per-exercise R², velocity-loss stats)
+
+Requires `numpy`, `pandas`, and (optionally) `scikit-learn` for cross-validated
+metrics.
 
 Outputs are saved under:
 
