@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import BarPath3D from '../components/BarPath3D';
+import SkeletonAvatar3D from '../components/SkeletonAvatar3D';
 import { theme } from '../theme/performanceLabTheme';
 import {
   computePathMetrics,
@@ -17,9 +18,20 @@ import {
   reconstructPath,
   synthPathFromReps,
 } from '../utils/barPath';
+import { generatePoseSequence } from '../utils/liftPose';
 
 const SPIN_STEP_DEG = 1.4;
 const SPIN_INTERVAL_MS = 45;
+const PLAYBACK_INTERVAL_MS = 45;
+
+const PATTERN_LABELS = {
+  squat: 'Squat pattern',
+  hinge: 'Hip hinge',
+  press: 'Press',
+  curl: 'Curl',
+  row: 'Row',
+  generic: 'General lift',
+};
 
 /**
  * Model 6 - Phase A: 3D bar-path viewer.
@@ -44,8 +56,16 @@ export default function MotionReplayScreen({ sessionData, onBack }) {
   const metrics = useMemo(() => computePathMetrics(points), [points]);
   const peakVelocity = metrics?.peakVelocity || 1;
 
+  const { frames, pattern } = useMemo(
+    () => generatePoseSequence(points, sessionData?.set?.exercise || sessionData),
+    [points, sessionData]
+  );
+
+  const [mode, setMode] = useState('path'); // 'path' | 'avatar'
   const [angle, setAngle] = useState(20);
   const [autoRotate, setAutoRotate] = useState(true);
+  const [playing, setPlaying] = useState(true);
+  const [frameIdx, setFrameIdx] = useState(0);
 
   useEffect(() => {
     if (!autoRotate) return undefined;
@@ -53,10 +73,19 @@ export default function MotionReplayScreen({ sessionData, onBack }) {
     return () => clearInterval(id);
   }, [autoRotate]);
 
+  useEffect(() => {
+    if (mode !== 'avatar' || !playing || frames.length < 2) return undefined;
+    const id = setInterval(() => setFrameIdx((i) => (i + 1) % frames.length), PLAYBACK_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [mode, playing, frames.length]);
+
   const nudge = (delta) => {
     setAutoRotate(false);
     setAngle((a) => (a + delta + 360) % 360);
   };
+
+  const activeFrame = frames[Math.min(frameIdx, frames.length - 1)];
+  const repProgress = frames.length > 1 ? Math.round((frameIdx / (frames.length - 1)) * 100) : 0;
 
   const verticalityColor =
     metrics && metrics.verticalityScore >= 85
@@ -73,7 +102,7 @@ export default function MotionReplayScreen({ sessionData, onBack }) {
         <TouchableOpacity onPress={onBack} style={styles.headerSide}>
           <Text style={styles.backButton}>‹</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>3D Bar Path</Text>
+        <Text style={styles.headerTitle}>3D Motion</Text>
         <View style={styles.headerSide} />
       </View>
 
@@ -83,21 +112,57 @@ export default function MotionReplayScreen({ sessionData, onBack }) {
           <View style={styles.noticeBanner}>
             <Text style={styles.noticeText}>
               {source === 'reps'
-                ? 'Approximate path reconstructed from rep metrics (no motion stream saved).'
-                : 'Demo path — record a set to see your real bar trajectory.'}
+                ? 'Approximate motion reconstructed from rep metrics (no motion stream saved).'
+                : 'Demo motion — record a set to see your real lift.'}
             </Text>
           </View>
         )}
 
+        <View style={styles.modeToggle}>
+          <TouchableOpacity
+            style={[styles.modeButton, mode === 'path' && styles.modeButtonActive]}
+            onPress={() => setMode('path')}
+          >
+            <Text style={[styles.modeText, mode === 'path' && styles.modeTextActive]}>Bar Path</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.modeButton, mode === 'avatar' && styles.modeButtonActive]}
+            onPress={() => setMode('avatar')}
+          >
+            <Text style={[styles.modeText, mode === 'avatar' && styles.modeTextActive]}>Avatar</Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.viewerCard}>
-          <BarPath3D
-            points={points}
-            peakVelocity={peakVelocity}
-            width={viewSize}
-            height={viewSize}
-            autoRotate={false}
-            angleDeg={angle}
-          />
+          {mode === 'path' ? (
+            <BarPath3D
+              points={points}
+              peakVelocity={peakVelocity}
+              width={viewSize}
+              height={viewSize}
+              autoRotate={false}
+              angleDeg={angle}
+            />
+          ) : (
+            <SkeletonAvatar3D
+              pose={activeFrame?.pose}
+              bar={activeFrame?.bar}
+              width={viewSize}
+              height={viewSize}
+              angleDeg={angle}
+            />
+          )}
+          {mode === 'avatar' && (
+            <View style={styles.playbackRow}>
+              <TouchableOpacity style={styles.playButton} onPress={() => setPlaying((p) => !p)}>
+                <Text style={styles.playButtonText}>{playing ? '❚❚' : '▶'}</Text>
+              </TouchableOpacity>
+              <View style={styles.progressTrack}>
+                <View style={[styles.progressFill, { width: `${repProgress}%` }]} />
+              </View>
+              <Text style={styles.patternLabel}>{PATTERN_LABELS[pattern] || 'Lift'}</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.controls}>
@@ -117,12 +182,14 @@ export default function MotionReplayScreen({ sessionData, onBack }) {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.legend}>
-          <LegendDot color={theme.colors.success} label="Fast" />
-          <LegendDot color={theme.colors.warning} label="Slowing" />
-          <LegendDot color={theme.colors.danger} label="Slow" />
-          <LegendDot color={theme.colors.border} label="Ideal" dashed />
-        </View>
+        {mode === 'path' && (
+          <View style={styles.legend}>
+            <LegendDot color={theme.colors.success} label="Fast" />
+            <LegendDot color={theme.colors.warning} label="Slowing" />
+            <LegendDot color={theme.colors.danger} label="Slow" />
+            <LegendDot color={theme.colors.border} label="Ideal" dashed />
+          </View>
+        )}
 
         {metrics ? (
           <>
@@ -208,6 +275,33 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
   },
   noticeText: { color: theme.colors.textMuted, fontSize: 12 },
+  modeToggle: {
+    flexDirection: 'row',
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  modeButton: { flex: 1, paddingVertical: 10, borderRadius: 9, alignItems: 'center' },
+  modeButtonActive: { backgroundColor: theme.colors.accentSoft },
+  modeText: { color: theme.colors.textMuted, fontSize: 13, fontWeight: '600' },
+  modeTextActive: { color: theme.colors.accent },
+  playbackRow: { flexDirection: 'row', alignItems: 'center', width: '100%', paddingHorizontal: 16, marginTop: 8 },
+  playButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: theme.colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  playButtonText: { color: theme.colors.accent, fontSize: 13, fontWeight: '700' },
+  progressTrack: { flex: 1, height: 5, borderRadius: 999, backgroundColor: theme.colors.bgElevated, overflow: 'hidden' },
+  progressFill: { height: '100%', backgroundColor: theme.colors.accent, borderRadius: 999 },
+  patternLabel: { color: theme.colors.textMuted, fontSize: 11, marginLeft: 10 },
   viewerCard: {
     backgroundColor: theme.colors.surface,
     borderRadius: 18,
